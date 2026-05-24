@@ -1,9 +1,8 @@
 import threading
 import queue
 import time
+import subprocess
 
-# We use pyttsx3 for offline TTS — no internet needed, works on Colab via espeak
-# Install: pip install pyttsx3 && apt-get install -y espeak
 
 _tts_engine  = None
 _tts_queue   = queue.Queue()
@@ -14,8 +13,20 @@ MIN_INTERVAL = 2.5   # seconds — don't repeat same command within this window
 
 
 def init():
-    """Call once at startup."""
+    """Call once at startup from models.py."""
     global _tts_engine, _tts_thread
+
+    # Install espeak system dependency automatically
+    try:
+        subprocess.run(
+            ["apt-get", "install", "-y", "espeak", "espeak-data",
+             "libespeak1", "libespeak-dev"],
+            capture_output=True
+        )
+    except Exception as e:
+        print(f"⚠️  espeak install failed: {e}")
+
+    # Init TTS engine
     try:
         import pyttsx3
         _tts_engine = pyttsx3.init()
@@ -31,21 +42,17 @@ def init():
 
 def speak(command, detail):
     """
-    Non-blocking. Puts the message on the queue.
+    Non-blocking. Puts message on queue.
     Skips if same command was spoken within MIN_INTERVAL seconds.
-
-    command — e.g. "step_right"
-    detail  — e.g. "1.4m gap at 2.1m"
     """
     if _tts_engine is None:
         return
 
     global _last_spoken, _last_time
-    now = time.time()
-
+    now  = time.time()
     text = _build_text(command, detail)
 
-    # Debounce — only speak if command changed or enough time passed
+    # Debounce
     if text == _last_spoken and (now - _last_time) < MIN_INTERVAL:
         return
 
@@ -77,13 +84,11 @@ def _build_text(command, detail):
     }
     base = PHRASES.get(command, command.replace("_", " "))
 
-    # Append simplified detail if meaningful
     if detail and detail not in ("assess surroundings", "no clear corridor ahead"):
-        # Strip technical notation, keep human-readable parts
         readable = detail.replace("m away", " metres away") \
                          .replace("m wide", " metres wide") \
-                         .replace("m gap", " metre gap") \
-                         .replace("m TTC", " metres,") \
+                         .replace("m gap",  " metre gap")   \
+                         .replace("m TTC",  " metres,")     \
                          .replace("_", " ")
         return f"{base} {readable}"
     return base
