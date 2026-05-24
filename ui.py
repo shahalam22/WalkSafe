@@ -30,7 +30,7 @@ def process_frame(pil_image):
         blank = np.zeros((400, 300, 3), dtype=np.uint8)
         cv2.putText(blank, "Waiting for camera...", (20, 200),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
-        return Image.fromarray(blank)
+        return Image.fromarray(blank), ""
 
     s = state.get()
     with state.lock():
@@ -70,9 +70,7 @@ def process_frame(pil_image):
 
         # Suggestion
         command, detail, reasoning = sug.decide(dets, gap_list)
-
-        # Speak
-        speaker.speak(command, detail)
+        phrase = speaker.command_phrase(command)
 
         # Rendering
         panel = fusion.build_panel(
@@ -94,7 +92,7 @@ def process_frame(pil_image):
         # })
 
         output = np.vstack([panel, strip])
-        return Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
+        return Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB)), phrase
 
 
 def on_reset():
@@ -134,7 +132,13 @@ def build_ui():
                     interactive=False,
                 )
 
-        cam_input.stream(fn=process_frame, inputs=[cam_input], outputs=[output_img])
+        tts_box = gr.Textbox(visible=False, elem_id="tts_box")
+
+        cam_input.stream(fn=process_frame, inputs=[cam_input], outputs=[output_img, tts_box])
         reset_btn.click(fn=on_reset, inputs=[], outputs=[output_img, status])
+        tts_box.change(
+            fn=None, inputs=[tts_box], outputs=[],
+            js="(t) => { if (!t) return; window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }"
+        )
 
     return demo
