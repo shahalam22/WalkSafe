@@ -39,7 +39,7 @@ def process_frame(pil_image):
         s["frame_idx"] += 1
         fi = s["frame_idx"]
 
-        # Depth — every N frames
+        # Depth
         if s["depth_arr"] is None or fi % CFG["depth_every_n_frames"] == 0:
             s["depth_arr"] = depth.estimate(frame_bgr, H, W)
         depth_arr = s["depth_arr"]
@@ -53,7 +53,8 @@ def process_frame(pil_image):
             flow_tensor  = flow.compute(prev, frame_bgr)
             flow_bgr     = flow.to_bgr_hue_arrows(flow_tensor, frame_bgr)
             flow_signals = flow.extract_signals(flow_tensor, depth_arr, H, W)
-            ego          = flow.derive_ego(flow_signals, depth_arr, s["speed_history"], H, W)
+            ego          = flow.derive_ego(flow_signals, depth_arr,
+                                           s["speed_history"], H, W)
             s["speed_history"] = (s["speed_history"] + [ego["ego_speed_ms"]])[-3:]
             s["ego"] = ego
         else:
@@ -66,11 +67,27 @@ def process_frame(pil_image):
         gap_list = gaps.find(depth_arr, H, W)
 
         # Build output
-        panel   = fusion.build_panel(frame_bgr, depth_arr, flow_bgr,
-                                     det_frame, gap_list, ego, H, W)
-        strip   = fusion.build_advisory(dets, gap_list, ego, depth_arr, W, H)
-        output  = np.vstack([panel, strip])
+        panel = fusion.build_panel(
+            frame_bgr, depth_arr, flow_bgr, det_frame, gap_list, ego, H, W)
 
+        # Unpack all 4 values from build_advisory
+        strip, command, detail, reasoning = fusion.build_advisory(
+            dets, gap_list, ego, depth_arr, W, H)
+
+        # ── DB HOOK (not implemented yet) ─────────────────────────────
+        # db.insert_frame({
+        #     "suggestion_command": command,
+        #     "suggestion_detail":  detail,
+        #     "reasoning":          reasoning,
+        #     "person_action":      ego["action"],
+        #     "ego_speed_ms":       ego["ego_speed_ms"],
+        #     "gaps":               gap_list,
+        #     "agents":             dets,
+        #     "frame_idx":          fi,
+        #     "timestamp":          time.time(),
+        # })
+
+        output = np.vstack([panel, strip])
         return Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
 
 
