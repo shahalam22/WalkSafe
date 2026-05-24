@@ -6,6 +6,7 @@ import gradio as gr
 
 import models
 import state
+import db
 from config import CFG
 from pipeline import depth, flow, gaps, fusion
 from pipeline import detection
@@ -78,24 +79,14 @@ def process_frame(pil_image):
         strip = fusion.build_advisory(
             dets, gap_list, ego, command, detail, W)
 
-        # ── DB HOOK (not implemented yet) ─────────────────────────────
-        # db.insert_frame({
-        #     "suggestion_command": command,
-        #     "suggestion_detail":  detail,
-        #     "reasoning":          reasoning,
-        #     "person_action":      ego["action"],
-        #     "ego_speed_ms":       ego["ego_speed_ms"],
-        #     "gaps":               gap_list,
-        #     "agents":             dets,
-        #     "frame_idx":          fi,
-        #     "timestamp":          time.time(),
-        # })
+        db.enqueue(fi, command, detail, reasoning, ego, gap_list, dets)
 
         output = np.vstack([panel, strip])
         return Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB)), phrase
 
 
 def on_reset():
+    db.new_session()
     state.reset(_track_history)
     return None, "State reset. Ready."
 

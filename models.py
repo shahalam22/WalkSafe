@@ -4,6 +4,7 @@ from transformers import DepthProImageProcessorFast, DepthProForDepthEstimation
 from torchvision.models.optical_flow import raft_small, Raft_Small_Weights
 from config import CFG
 import audio.speaker as speaker
+import db
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -42,6 +43,7 @@ def load_all():
     # ── Speaker — last, non-critical ──────────────────────────────────────────
     # Initialised after vision models so a TTS failure never blocks the pipeline
     speaker.init()
+    db.init()
 
     print("✅ All models loaded")
 
