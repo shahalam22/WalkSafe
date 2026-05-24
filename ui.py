@@ -1,4 +1,4 @@
-from pipeline import suggestion as sug
+from audio import speaker    # ← NEW
 
 def process_frame(pil_image):
     if pil_image is None:
@@ -43,10 +43,13 @@ def process_frame(pil_image):
         # Gaps
         gap_list = gaps.find(depth_arr, H, W)
 
-        # ── Suggestion: pure data decision, happens before rendering ───
+        # Suggestion
         command, detail, reasoning = sug.decide(dets, gap_list)
 
-        # ── Rendering ─────────────────────────────────────────────────
+        # ── Speak the suggestion ───────────────────────────────────────
+        speaker.speak(command, detail)                              # ← NEW
+
+        # Rendering
         panel = fusion.build_panel(
             frame_bgr, depth_arr, flow_bgr, det_frame, gap_list, ego, H, W)
         strip = fusion.build_advisory(
