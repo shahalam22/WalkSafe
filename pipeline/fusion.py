@@ -17,6 +17,161 @@ ACTION_COLOR = {
     "turning_right":     (200,  40,  40),
 }
 
+# Suggestion commands mirror the action taxonomy
+SUGGESTION_COLOR = {
+    "stop":             (0,   0,   220),
+    "slow_down":        (0,   100, 255),
+    "walk_forward":     (0,   200,  80),
+    "walk_forward_slow":(0,   180, 160),
+    "step_left":        (255, 160,   0),
+    "step_right":       (255, 120,   0),
+    "turn_left":        (200,  80, 255),
+    "turn_right":       (140,  60, 255),
+    "yield":            (0,   180, 255),
+}
+
+# ══════════════════════════════════════════════════════════════════
+# NAVIGATION SUGGESTION ENGINE
+# Input:  gaps, agents (depth + motion + risk)
+# Output: action command for the person to take
+# ══════════════════════════════════════════════════════════════════
+
+def generate_suggestion(ego, dets, gap_list):
+    """
+    Pure scene reasoning — ego action is NOT used here.
+    Returns:
+        command   — action to take  e.g. "step_right", "walk_forward"
+        detail    — short context   e.g. "1.4m gap at 2.1m"
+        reasoning — structured str  for DB storage later
+    """
+    RISK_ORDER  = {"critical":0, "high":1, "moderate":2, "low":3}
+    top_agents  = sorted(dets,
+                         key=lambda d: (RISK_ORDER.get(d["risk_level"],3), d["dist_m"]))
+    critical    = [a for a in top_agents if a["risk_level"] == "critical"]
+    approaching = [a for a in top_agents
+                   if a["motion"] in ("approaching", "parallel_counter", "erratic")]
+    crossing    = [a for a in top_agents if "crossing" in a["motion"]]
+    best_gap    = max(gap_list, key=lambda g: g["width_px"]) if gap_list else None
+
+    # ── Rule 1: Critical agent — stop immediately ─────────────────────
+    if critical:
+        a   = critical[0]
+        ttc = f"{a['ttc_s']:.1f}s" if a.get("ttc_s") and a["ttc_s"] < 10 else ""
+        return (
+            "stop",
+            f"{a['name']} {a['motion'].replace('-',' ')} {a['dist_m']:.1f}m"
+            + (f" TTC {ttc}" if ttc else ""),
+            f"critical:{a['name']}:{a['motion']}:{a['dist_m']}m"
+        )
+
+    # ── Rule 2: No gap at all ─────────────────────────────────────────
+    if not gap_list:
+        return (
+            "stop",
+            "no clear corridor ahead",
+            "no_gap"
+        )
+
+    # ── Rule 3: Crossing agent with very short TTC — yield ───────────
+    if crossing:
+        a   = crossing[0]
+        ttc = a.get("ttc_s")
+        if ttc and ttc < 3.0:
+            return (
+                "yield",
+                f"{a['name']} crossing in {ttc:.1f}s",
+                f"crossing:{a['name']}:{ttc:.1f}s"
+            )
+
+    # ── Rule 4: Approaching agent — slow or yield ─────────────────────
+    if approaching:
+        a   = approaching[0]
+        ttc = a.get("ttc_s")
+        if ttc and ttc < CFG["ttc_critical"]:
+            return (
+                "stop",
+                f"{a['name']} approaching {a['dist_m']:.1f}m TTC {ttc:.1f}s",
+                f"approaching_critical:{a['name']}:{a['dist_m']}m"
+            )
+        if ttc and ttc < CFG["ttc_urgent"]:
+            return (
+                "yield",
+                f"{a['name']} approaching {a['dist_m']:.1f}m",
+                f"approaching_urgent:{a['name']}:{a['dist_m']}m"
+            )
+        if a["dist_m"] < CFG["close_distance_m"]:
+            return (
+                "slow_down",
+                f"{a['name']} ahead {a['dist_m']:.1f}m",
+                f"approaching_close:{a['name']}:{a['dist_m']}m"
+            )
+
+    # ── Rule 5: Route toward best gap ────────────────────────────────
+    dir_    = best_gap["direction"]
+    width_m = best_gap["width_m"]
+    dist_m  = best_gap["dist_m"]
+    detail  = f"{width_m:.1f}m gap {dist_m:.1f}m away"
+
+    # Tight gap — slow approach regardless of direction
+    if width_m < CFG["gap_tight"]:
+        if dir_ == "ahead":
+            return (
+                "walk_forward_slow",
+                f"tight corridor {detail}",
+                f"tight_gap_ahead:{width_m}m:{dist_m}m"
+            )
+        elif dir_ == "right":
+            return (
+                "step_right",
+                f"tight corridor right — {detail}",
+                f"tight_gap_right:{width_m}m:{dist_m}m"
+            )
+        else:
+            return (
+                "step_left",
+                f"tight corridor left — {detail}",
+                f"tight_gap_left:{width_m}m:{dist_m}m"
+            )
+
+    # Comfortable gap
+    if dir_ == "ahead":
+        if width_m >= CFG["gap_comfortable"] and not approaching:
+            return (
+                "walk_forward",
+                detail,
+                f"clear_ahead:{width_m}m:{dist_m}m"
+            )
+        return (
+            "walk_forward_slow",
+            detail + (" — agent nearby" if approaching else ""),
+            f"ahead_with_caution:{width_m}m:{dist_m}m"
+        )
+
+    elif dir_ == "right":
+        return (
+            "step_right",
+            detail,
+            f"gap_right:{width_m}m:{dist_m}m"
+        )
+
+    elif dir_ == "left":
+        return (
+            "step_left",
+            detail,
+            f"gap_left:{width_m}m:{dist_m}m"
+        )
+
+    # ── Fallback ──────────────────────────────────────────────────────
+    return (
+        "slow_down",
+        "assess surroundings",
+        "fallback"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# FUSION PANEL
+# ══════════════════════════════════════════════════════════════════
 
 def build_panel(frame_bgr, depth_arr, flow_bgr, det_frame, gaps, ego, H, W):
     depth_col = depth_colormap(depth_arr)
@@ -41,61 +196,89 @@ def build_panel(frame_bgr, depth_arr, flow_bgr, det_frame, gaps, ego, H, W):
     for frac, label in [(0.18,"FREE"),(0.38,"OVERHEAD"),(0.62,"TORSO")]:
         y = int(H * frac)
         cv2.line(fused, (0,y), (W,y), (200,200,200), 1)
-        cv2.putText(fused, label, (4, y-4),
+        cv2.putText(fused, label, (4,y-4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.30, (200,200,200), 1)
 
-    _draw_action_banner(fused, ego, H)
     return fused
 
 
+# ══════════════════════════════════════════════════════════════════
+# ADVISORY STRIP
+# ══════════════════════════════════════════════════════════════════
+
 def build_advisory(dets, gaps, ego, depth_arr, W, H):
-    ah  = CFG["advisory_height_px"]
-    adv = np.zeros((ah, W, 3), dtype=np.uint8)
+    """
+    4 rows:
+      Row 1 — SUGGESTED ACTION  (command from gap+agent reasoning)
+      Row 2 — PERSON ACTION     (what they are actually doing — for DB log)
+      Row 3 — GAP               (best gap details)
+      Row 4 — AGENT             (most critical agent)
+
+    # DB NOTE: persist per frame:
+    #   suggestion_command, suggestion_detail, reasoning,
+    #   person_action, ego_speed_ms,
+    #   gaps, agents, timestamp
+    """
+    command, detail, reasoning = generate_suggestion(ego, dets, gaps)
+
+    ah   = 170
+    adv  = np.zeros((ah, W, 3), dtype=np.uint8)
     adv[:] = (18, 18, 18)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    lh   = ah // 4
+    lh   = ah // 5
 
-    # Row 1 — ego action
-    action_str = ego["action"].replace("_"," ").upper()
-    ego_col    = ACTION_COLOR.get(ego["action"], (200,200,200))
+    sug_col = SUGGESTION_COLOR.get(command, (200,200,200))
+
+    # ── Row 1: Suggested action (large, prominent) ────────────────────
+    cv2.rectangle(adv, (0,0), (W, lh+8), (28,28,28), -1)
     cv2.putText(adv,
-                f"ACTION: {action_str}  {ego['ego_speed_ms']:.2f} m/s",
-                (10, lh), font, 0.52, ego_col, 1)
+                f"  ► {command.replace('_',' ').upper()}   {detail}",
+                (6, lh), font, 0.60, sug_col, 2)
+    cv2.line(adv, (0, lh+8), (W, lh+8), sug_col, 2)
 
-    # Row 2 — best gap
+    # ── Row 2: Person's actual action (logged, displayed) ────────────
+    ego_col = ACTION_COLOR.get(ego["action"], (200,200,200))
+    cv2.putText(adv,
+                f"  YOU: {ego['action'].replace('_',' ')}  "
+                f"|  {ego['ego_speed_ms']:.2f} m/s",
+                (6, lh*2+4), font, 0.44, ego_col, 1)
+
+    # ── Row 3: Gap ────────────────────────────────────────────────────
     if gaps:
-        best = max(gaps, key=lambda g: g["width_px"])
+        best    = max(gaps, key=lambda g: g["width_px"])
         gap_col = (0,220,80)  if best["width_m"] >= CFG["gap_comfortable"] else \
                   (0,200,200) if best["width_m"] >= CFG["gap_tight"]       else \
                   (0,120,255)
         cv2.putText(adv,
-                    f"GAP: {best['width_m']:.1f}m wide  "
-                    f"{best['dist_m']:.1f}m away  → {best['direction'].upper()}",
-                    (10, lh*2), font, 0.52, gap_col, 1)
+                    f"  GAP: {best['width_m']:.1f}m wide  "
+                    f"|  {best['dist_m']:.1f}m away  "
+                    f"|  {best['direction'].upper()}",
+                    (6, lh*3+4), font, 0.44, gap_col, 1)
     else:
-        cv2.putText(adv, "GAP: No clear corridor — STOP or WAIT",
-                    (10, lh*2), font, 0.52, (0,60,220), 1)
+        cv2.putText(adv, "  GAP: none detected",
+                    (6, lh*3+4), font, 0.44, (0,60,220), 1)
 
-    # Row 3 — most critical agent
-    RISK_ORDER = {"critical":0,"high":1,"moderate":2,"low":3}
+    # ── Row 4: Most critical agent ────────────────────────────────────
+    RISK_ORDER  = {"critical":0,"high":1,"moderate":2,"low":3}
     sorted_dets = sorted(dets,
-                         key=lambda d: (RISK_ORDER.get(d["risk_level"],3), d["dist_m"]))
+                         key=lambda d:(RISK_ORDER.get(d["risk_level"],3), d["dist_m"]))
+    RCOL = {"critical":(0,0,220),"high":(0,100,255),
+            "moderate":(0,200,255),"low":(80,180,80)}
     if sorted_dets:
-        a   = sorted_dets[0]
-        ttc_str = f"  TTC {a['ttc_s']:.1f}s" if a.get("ttc_s") and a["ttc_s"] < 10 else ""
-        RCOL = {"critical":(0,0,220),"high":(0,100,255),
-                "moderate":(0,200,255),"low":(80,180,80)}
+        a       = sorted_dets[0]
+        ttc_str = f" TTC {a['ttc_s']:.1f}s" if a.get("ttc_s") and a["ttc_s"]<10 else ""
         cv2.putText(adv,
-                    f"AGENT [{a['risk_level'].upper()}]: "
+                    f"  AGENT [{a['risk_level'].upper()}]: "
                     f"{a['name']} {a['motion'].replace('-',' ')} "
                     f"at {a['dist_m']:.1f}m{ttc_str}",
-                    (10, lh*3), font, 0.52, RCOL.get(a["risk_level"],(180,180,180)), 1)
+                    (6, lh*4+4), font, 0.44,
+                    RCOL.get(a["risk_level"],(180,180,180)), 1)
     else:
-        cv2.putText(adv, "AGENT: None detected — path clear",
-                    (10, lh*3), font, 0.52, (80,180,80), 1)
+        cv2.putText(adv, "  AGENT: none",
+                    (6, lh*4+4), font, 0.44, (80,180,80), 1)
 
     cv2.line(adv, (0,0), (W,0), (60,60,60), 2)
-    return adv
+    return adv, command, detail, reasoning
 
 
 def _draw_action_banner(frame, ego, H):
