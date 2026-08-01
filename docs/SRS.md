@@ -3,7 +3,9 @@
 # WalkSafe
 ## A Real-Time Navigation Assistant for Blind and Low-Vision Pedestrians
 
-**SE-801 Software Project Lab 3 — Midterm Technical Report**
+**SE-801 Software Project Lab 3**
+
+Midterm Technical Report
 
 <br/>
 
@@ -12,6 +14,8 @@
 Shah Alam Abir
 
 Roll: BSSE-1439
+
+<br/>
 
 **Supervised by**
 
@@ -22,17 +26,82 @@ Associate Professor
 Institute of Information Technology
 University of Dhaka
 
+<br/>
+
 **Date: August 01, 2026**
 
 </div>
 
 ---
 
+## Letter of Transmittal
+
+August 01, 2026
+
+BSSE 4th Year Exam Committee
+Institute of Information Technology
+University of Dhaka
+
+**Subject:** Technical Report Submission — WalkSafe: A Real-Time Navigation Assistant for Blind and Low-Vision Pedestrians.
+
+Dear Sir,
+
+I am submitting the midterm technical report for my Software Project Lab 3, WalkSafe: A Real-Time Navigation Assistant for Blind and Low-Vision Pedestrians. This report covers the project's technical details, including the requirements, system and data models, architecture, and preliminary test plan, along with the progress made on the working prototype so far.
+
+Because the system is intended to be used by blind pedestrians while walking, I have also included a short analysis of the risks it can contribute to and the requirements that address them. While I have tried to do my best, I welcome your feedback for improvement.
+
+Thank you for your consideration.
+
+Sincerely,
+
+Shah Alam Abir
+
+BSSE-1439
+
+Institute of Information Technology
+University of Dhaka
+
+<br/>
+
+01.08.2026
+
+`---------------------------------`
+
+Supervisor's Signature
+
+---
+
+## Acknowledgment
+
+I would like to express my sincere gratitude to the Institute of Information Technology, University of Dhaka, for the opportunity to work on the WalkSafe project. A special thanks to my supervisor, Dr. Md. Nurul Ahad Tawhid, Associate Professor at the Institute of Information Technology, whose guidance and encouragement were invaluable throughout the project. His feedback shaped the direction of the work and kept it focused on what the system actually needs to get right.
+
+This project builds directly on models released by the open-source research community, and it would not have been feasible within a single lab course without the published work behind DepthPro, YOLO, ByteTrack, and RAFT. I also appreciate the feedback of my classmates during design discussions, which helped refine several decisions in this report.
+
+Finally, I would like to acknowledge in advance the orientation-and-mobility professionals and blind participants whose review the later stages of this project depend on. A tool meant for blind travellers cannot be judged without them, and their involvement is planned into the validation stages described in this report.
+
+---
+
+## Abstract
+
+Blind and low-vision pedestrians rely on two tools for independent travel. A white cane finds the ground and obstacles within about one step, and GPS applications give route-level direction over tens of metres. Neither serves the space roughly one to eight metres ahead, which is where a pedestrian decides to slow down, move aside, or wait for someone to pass. A cyclist approaching from the side or a scooter parked across the footpath falls outside both: the cane reaches it too late, and the map does not know it exists.
+
+WalkSafe is a real-time navigation assistant that fills this gap using a smartphone camera. It combines three pretrained vision models, DepthPro for depth in metres, YOLO with ByteTrack for detecting and following people, cyclists and vehicles, and RAFT for image motion, with deterministic rules that reduce the scene to one spoken instruction from a fixed nine-command vocabulary. Every decision is recorded with the values behind it, and no images are stored at any point.
+
+The central finding of the work is that guidance of this kind cannot come from one place. A round trip to a shared Colab GPU takes about a second, which is acceptable for deciding which way to walk and useless for saying stop. WalkSafe therefore splits the work by urgency: a cheap check on the phone measures how fast the image is expanding and can warn of an imminent collision within 250 milliseconds, while the server performs the fuller analysis on a more generous budget. A warning from the phone always overrides the server, so the fast path can only ever make the system more cautious.
+
+This report presents the requirements, the scenario, data and design models, the architecture, an AI engineering design, a preliminary test plan, and the risks the system can contribute to along with the requirements that address them. A working prototype of the perception pipeline, decision engine, logging, and analytics dashboard has been built, and the remaining work is scheduled in the timeline.
+
+---
+
 ## Table of Contents
+
+- [Letter of Transmittal](#letter-of-transmittal)
+- [Acknowledgment](#acknowledgment)
+- [Abstract](#abstract)
 
 1. [Project Overview](#1-project-overview)
 2. [Requirements Analysis](#2-requirements-analysis)
-3. [System Modeling](#3-system-modeling)
+3. [Scenario-Based Modeling](#3-scenario-based-modeling)
 4. [Data and Information Modeling](#4-data-and-information-modeling)
 5. [Software Design](#5-software-design)
 6. [Software Architecture](#6-software-architecture)
@@ -45,16 +114,20 @@ University of Dhaka
 
 | # | Title |
 |---|---|
-| 1 | Use Case Diagram — Level 0 |
-| 2 | Use Case Diagram — Level 1 |
-| 3 | Activity Diagram — Per-Frame Guidance Loop |
-| 4 | Activity Diagram — Session Start and Calibration |
-| 5 | Activity Diagram — Degradation Handling |
-| 6 | ER Diagram |
-| 7 | Component Diagram |
-| 8 | Deployment Architecture |
-| 9 | AI Pipeline |
-| 10 | Gantt Chart |
+| 1 | Level 0 (WalkSafe) |
+| 2 | Level 1 (Modules of WalkSafe) |
+| 3 | Level 1.1 (Setup and Session Management System) |
+| 4 | Level 1.2 (Scene Analysis and Decision System) |
+| 5 | Level 1.3 (Guidance Delivery System) |
+| 6 | Level 1.4 (Logging and Review System) |
+| 7 | Activity Diagram (Setup and Session Start) |
+| 8 | Activity Diagram (Guidance Loop) |
+| 9 | Activity Diagram (Capability Change and Recovery) |
+| 10 | ER Diagram |
+| 11 | Component Diagram |
+| 12 | Where Things Run |
+| 13 | AI Pipeline |
+| 14 | Gantt Chart |
 
 ---
 
@@ -78,7 +151,7 @@ A smartphone camera can capture the information needed to fill this gap, and cur
 2. Estimate distance, approach speed, and time-to-collision for each detected agent.
 3. Identify traversable openings ahead and measure their width in metres.
 4. Produce one navigation command per decision cycle from a fixed nine-command vocabulary.
-5. Deliver imminent-obstacle warnings within 250 ms and routing guidance within 1200 ms.
+5. Deliver imminent-obstacle warnings and routing guidance.
 6. Announce every degradation and failure audibly instead of falling silent.
 7. Make the application fully operable without sight.
 8. Log every decision with its inputs for later evaluation, storing no images.
@@ -119,7 +192,7 @@ A smartphone camera can capture the information needed to fill this gap, and cur
 | D4 | **Test suite and test clips** | Automated tests for the safety requirements, plus recorded clips with known distances and directions to test against | Planned |
 | D5 | **Final report and demonstration** | Final report and a working demonstration | Planned |
 
-**Device scope.** The smartphone is the only device, and its camera is the only sensor. Commands are heard through the phone speaker or earphones plugged into it. The heavy models run on a Colab GPU, which is remote compute rather than something the user carries. Earphones are supported but not required, since a blind traveller needs to hear their surroundings (NFR-20).
+**Device scope.** The smartphone is the only device, and its camera is the only sensor. Commands are heard through the phone speaker or earphones plugged into it. The heavy models run on a Colab GPU, which is remote compute rather than something the user carries. Earphones are supported but not required, since a blind traveller needs to hear their surroundings (NFR-12).
 
 **Not separate deliverables.** The server-side pipeline is part of D1 and continues to serve D3. The fixes listed in §9 under *Core fixes* are work inside D1 and D3. Module-level status is reported in the implementation progress report.
 
@@ -129,68 +202,68 @@ A smartphone camera can capture the information needed to fill this gap, and cur
 
 ## 2.1 Functional Requirements
 
-Requirements marked **SC** are safety-critical: failure can contribute to physical harm. Each maps to a risk in the Appendix.
+Each requirement below maps to a risk in the Appendix, which records what can go wrong if it is not met.
 
 ### Capture and Perception
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-1 | Capture video from the rear camera, tagging every frame with the time it was taken, and reject frames too dark, bright, or blurred to use. | SC |
-| FR-2 | Estimate the distance to obstacles and to the ground ahead. | SC |
-| FR-3 | Detect and track people, cyclists, and vehicles across frames. | SC |
+| ID | Requirement |
+|---|---|
+| FR-1 | Capture video from the rear camera, tagging every frame with the time it was taken, and reject frames too dark, bright, or blurred to use. |
+| FR-2 | Estimate the distance to obstacles and to the ground ahead. |
+| FR-3 | Detect and track people, cyclists, and vehicles across frames. |
 
 ### Interpretation
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-4 | Classify each tracked agent's motion: approaching, receding, crossing, or static. | SC |
-| FR-5 | Estimate each agent's distance, approach speed, and time to collision, using measured frame times rather than an assumed frame rate. | SC |
-| FR-6 | Assign each agent a risk level of critical, high, moderate, or low. | SC |
+| ID | Requirement |
+|---|---|
+| FR-4 | Classify each tracked agent's motion: approaching, receding, crossing, or static. |
+| FR-5 | Estimate each agent's distance, approach speed, and time to collision, using measured frame times rather than an assumed frame rate. |
+| FR-6 | Assign each agent a risk level of critical, high, moderate, or low. |
 
 ### Navigation Decision
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-7 | Find openings ahead wide enough to walk through, and measure their width in metres. | SC |
-| FR-8 | Compare each opening against the user's shoulder width plus a clearance margin, and report when no safe opening exists. | SC |
-| FR-9 | Produce exactly one command per cycle from the nine commands, applying rules in a fixed order that puts hazard avoidance before route choice, with a cautious default when no rule matches. | SC |
-| FR-10 | Restrict output to the cautious commands when confidence in what the camera is showing is low. | SC |
-| FR-11 | Record with each command the rule and the values that produced it. | |
+| ID | Requirement |
+|---|---|
+| FR-7 | Find openings ahead wide enough to walk through, and measure their width in metres. |
+| FR-8 | Compare each opening against the user's shoulder width plus a clearance margin, and report when no safe opening exists. |
+| FR-9 | Produce exactly one command per cycle from the nine commands, applying rules in a fixed order that puts hazard avoidance before route choice, with a cautious default when no rule matches. |
+| FR-10 | Restrict output to the cautious commands when confidence in what the camera is showing is low. |
+| FR-11 | Record with each command the rule and the values that produced it. |
 
 ### Guidance Delivery
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-12 | Speak each command and play a distinct sound for it, reinforcing urgent commands with a vibration. | SC |
-| FR-13 | Speak only when the situation changes, and stay silent otherwise. | SC |
-| FR-14 | Interrupt speech in progress immediately for a `stop`. | SC |
-| FR-15 | Let the user mute guidance and adjust verbosity and speech rate during a session. | |
+| ID | Requirement |
+|---|---|
+| FR-12 | Speak each command and play a distinct sound for it, reinforcing urgent commands with a vibration. |
+| FR-13 | Speak only when the situation changes, and stay silent otherwise. |
+| FR-14 | Interrupt speech in progress immediately for a `stop`. |
+| FR-15 | Let the user mute guidance and adjust verbosity and speech rate during a session. |
 
 ### Safety and Failure Handling
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-16 | Never let guidance from the server override or delay a `stop` produced on the phone. | SC |
-| FR-17 | Discard guidance that has become too old instead of speaking it late. | SC |
-| FR-18 | Announce every loss of capability with its cause, and repeat the announcement while capability is reduced. | SC |
-| FR-19 | Announce that guidance has stopped on any fault. Never fail silently. | SC |
-| FR-20 | Warn before low battery or overheating ends the session. | SC |
+| ID | Requirement |
+|---|---|
+| FR-16 | Never let guidance from the server override or delay a `stop` produced on the phone. |
+| FR-17 | Discard guidance that has become too old instead of speaking it late. |
+| FR-18 | Announce every loss of capability with its cause, and repeat the announcement while capability is reduced. |
+| FR-19 | Announce that guidance has stopped on any fault. Never fail silently. |
+| FR-20 | Warn before low battery or overheating ends the session. |
 
 ### Setup, Session, and Accessibility
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-21 | Start and end a session with a single action that does not require sight. | |
-| FR-22 | Find the server automatically. Never ask the user to read or enter a link. | SC 
-| FR-23 | Guide the user through setup by voice: camera field of view, mounting position, a depth check against a known distance, and a left/right test that blocks use if it fails. | SC |
+| ID | Requirement |
+|---|---|
+| FR-21 | Start and end a session with a single action that does not require sight. |
+| FR-22 | Find the server automatically. Never ask the user to read or enter a link. |
+| FR-23 | Guide the user through setup by voice: camera field of view, mounting position, a depth check against a known distance, and a left/right test that blocks use if it fails. |
 
 ### Logging and Review
 
-| ID | Requirement | SC |
-|---|---|:--:|
-| FR-24 | Record every decision with the values behind it, and store no images at any point. | |
-| FR-25 | Write logs without delaying guidance. | SC |
-| FR-26 | Show command, risk, and speed summaries, guidance delay against target, and time spent in each reduced state. | |
+| ID | Requirement |
+|---|---|
+| FR-24 | Record every decision with the values behind it, and store no images at any point. |
+| FR-25 | Write logs without delaying guidance. |
+| FR-26 | Show command, risk, and speed summaries, guidance delay against target, and time spent in each reduced state. |
 
 ## 2.2 Non-Functional Requirements
 
@@ -210,7 +283,7 @@ Requirements marked **SC** are safety-critical: failure can contribute to physic
 | NFR-5 | Every failure leaves the system more cautious, never less. |
 | NFR-6 | Left and right are never reversed. |
 | NFR-7 | No fault is signalled by silence alone. |
-| NFR-8 | Every safety-critical requirement has an automated test. |
+| NFR-8 | Every requirement whose failure appears in the Appendix has an automated test. |
 
 Capability is reduced in defined steps, each more cautious than the last:
 
@@ -535,9 +608,33 @@ graph LR
 
 ## 3.2 Activity Diagram
 
-An activity diagram shows the order in which a system's steps happen, including the points where it chooses between alternatives. The three diagrams below cover the parts of WalkSafe where the ordering matters most: the loop that runs on every frame, how a session begins, and what happens when the app loses capability part-way through a walk.
+An activity diagram shows the order in which a system's steps happen, including the points where it chooses between alternatives. The three diagrams below cover the parts of WalkSafe where the ordering matters most: how a session begins, the loop that runs on every frame, and what happens when the app loses capability part-way through a walk.
 
-**Figure 7: Activity Diagram (Guidance Loop)**
+**Figure 7: Activity Diagram (Setup and Session Start)**
+
+```mermaid
+flowchart TD
+    A([App launched]) --> B{Already set up?}
+    B -->|Yes| G([Ready])
+    B -->|No| C[Explain limits,<br/>ask consent]
+    C --> D[Read field of view,<br/>check depth]
+    D --> E[Run left/right test]
+    E --> F{Checks pass?}
+    F -->|No| X([Setup rejected])
+    F -->|Yes| G
+
+    G --> H([User holds button])
+    H --> I[Start phone check]
+    I --> J{Server found?}
+    J -->|Yes| K[Announce<br/>full guidance]
+    J -->|No| L[Announce collision<br/>warnings only]
+    K --> M([Session active])
+    L --> M
+```
+
+---
+
+**Figure 8: Activity Diagram (Guidance Loop)**
 
 This runs once per frame. The phone check and the server work at the same time and meet at the arbitration step. The double-bordered box is where this loop hands over to the capability check in Figure 9: an unusable frame, a phone check that has stopped running, or a server that does not answer all become inputs to that flow.
 
@@ -569,37 +666,13 @@ flowchart TD
     K --> Z
 ```
 
-**Figure 8: Activity Diagram (Setup and Session Start)**
-
-```mermaid
-flowchart TD
-    A([App launched]) --> B{Already set up?}
-    B -->|Yes| G([Ready])
-    B -->|No| C[Explain limits,<br/>ask consent]
-    C --> D[Read field of view,<br/>check depth]
-    D --> E[Run left/right test]
-    E --> F{Checks pass?}
-    F -->|No| X([Setup rejected])
-    F -->|Yes| G
-
-    G --> H([User holds button])
-    H --> I[Start phone check]
-    I --> J{Server found?}
-    J -->|Yes| K[Announce<br/>full guidance]
-    J -->|No| L[Announce collision<br/>warnings only]
-    K --> M([Session active])
-    L --> M
-```
-
----
-
 **Figure 9: Activity Diagram (Capability Change and Recovery)**
 
-This runs alongside the guidance loop for the whole session. Its inputs come from the double-bordered box in Figure 7, plus the battery and temperature readings. Every step down is announced with its reason, and the announcement repeats while capability stays reduced, so silence is never mistaken for everything being fine.
+This runs alongside the guidance loop for the whole session. Its inputs come from the double-bordered box in Figure 8, plus the battery and temperature readings. Every step down is announced with its reason, and the announcement repeats while capability stays reduced, so silence is never mistaken for everything being fine.
 
 ```mermaid
 flowchart TD
-    IN[["From the guidance loop<br/>Figure 7"]] --> B
+    IN[["From the guidance loop<br/>Figure 8"]] --> B
     A([Session running at L0]) --> B{Problem detected?}
     B -->|None| A
 
@@ -628,7 +701,7 @@ flowchart TD
 
 # 4. Data and Information Modeling
 
-WalkSafe keeps a small relational store. Two rules shape it. **No images are stored anywhere**, so the tables hold what the app measured and decided, not what it saw. And **each decision records two times** — when the frame was captured and when the command was spoken — because the gap between them is the guidance delay that NFR-1 and NFR-2 are about.
+WalkSafe keeps a small relational store that records what the app measured and what it decided, never what it saw. No images are kept at any point, so a walk leaves behind numbers rather than footage of the street: enough to reconstruct why any command was given, and nothing that could identify a passer-by.
 
 **Figure 10: ER Diagram**
 
@@ -700,8 +773,6 @@ The schemas derived from the ER diagram are as follows.
 | | to_level | VARCHAR(4) |
 
 *Table 1: Schema table*
-
-A few points worth noting. `camera_fov_deg`, `depth_scale`, and the mount figures are measured during setup, never assumed, and `depth_check_passed` and `direction_test_passed` must both be true before the app can be used. Each decision stores two times, because `delay_ms` between them is what NFR-1 and NFR-2 are measured against. `ttc_s` is left empty when it cannot be computed rather than filled with a placeholder. The `event` rows are what `time spent in each reduced state` in FR-26 is computed from, and they are never dropped when the log queue is busy. There is no separate profile table: WalkSafe has no accounts and no sign-in, so the `user` row holds both preferences and the setup measurements for that phone.
 
 
 ---
@@ -941,15 +1012,8 @@ The last row is the important one. The phone does not need to know how far away 
 
 Not applicable. WalkSafe contains no language model and nothing generative. All three server models take an image and return numbers, so there is no prompt to design. The decision layer is hand-written rules.
 
-This is on purpose. A prompted model in the decision path would be unpredictable, far too slow for the budgets in §2.2, and would make it impractical to say exactly why a command was issued.
+This is on purpose. A prompted model in the decision path would be unpredictable, far too slow for the budgets in section 2.2, and would make it impractical to say exactly why a command was issued.
 
-## 7.5 Open Questions
-
-| # | Question | Blocks |
-|---|---|---|
-| 1 | Is DepthPro worth its cost, or would a lighter depth model at a higher frame rate be better? | The 1.2 s server budget |
-| 2 | What expansion threshold avoids firing on camera shake and head turns? | Whether the phone check is usable |
-| 3 | All risk and opening thresholds are untested placeholders and need calibrating against real walks | Trusting any of the safety behaviour |
 
 ---
 
@@ -1012,42 +1076,27 @@ Stages 2 to 4 need ethics approval and an instructor present, so they are schedu
 
 # 9. Timeline
 
-Deadline: **7 September 2026**. The prototype is working, so the remaining work is correcting what it gets wrong and building the parts it does not have yet.
+The project runs from May to the submission deadline on 7 September 2026.
 
-**Where the 26 functional requirements stand**
+The first weeks went on studying the problem and choosing models, followed by the proposal presentation at the end of May. The prototype was built through June and the first half of July, and this report was written in the second half of July.
 
-| | Count | Requirements |
-|---|---|---|
-| Working now | 8 | FR-2, FR-3, FR-4, FR-6, FR-9, FR-11, FR-24, FR-25 |
-| Partly working | 7 | FR-1, FR-5, FR-7, FR-12, FR-14, FR-21, FR-26 |
-| Not started | 11 | FR-8, FR-10, FR-13, FR-15 to FR-20, FR-22, FR-23 |
-
-The partly-working ones are the risky group. The pipeline computes time to collision, finds openings, and speaks commands, but it assumes a fixed frame rate, judges openings against a relative threshold, and speaks on every frame. Each produces plausible output that is wrong, so they are scheduled first.
+The remaining time is for development, testing, and writing up. Development in August covers both halves of the work still outstanding: correcting the parts of the prototype that behave incorrectly, and building the pieces that do not exist yet, which are the on-phone collision check, guidance delivery, the capability levels, and the setup flow.
 
 **Figure 14: Gantt Chart**
 
-```mermaid
-gantt
-    title       WalkSafe — May to 7 September 2026
-    dateFormat  YYYY-MM-DD
-    axisFormat  %d %b
+<table class="gantt">
+<tr><th rowspan="2">Tasks</th><th colspan="4">May</th><th colspan="4">June</th><th colspan="4">July</th><th colspan="4">August</th><th>Sep</th></tr>
+<tr><th>1</th><th>2</th><th>3</th><th>4</th><th>1</th><th>2</th><th>3</th><th>4</th><th>1</th><th>2</th><th>3</th><th>4</th><th>1</th><th>2</th><th>3</th><th>4</th><th>1</th></tr>
+<tr><td><b>Study and model selection</b></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><b>Proposal presentation</b></td><td></td><td></td><td></td><td style="background:#555"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><b>MVP development</b></td><td></td><td></td><td></td><td></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><b>SRS documentation</b></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td style="background:#555"></td><td style="background:#555"></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><b>Development</b></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td style="background:#555"></td><td></td></tr>
+<tr><td><b>Testing</b></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td style="background:#555"></td><td style="background:#555"></td></tr>
+<tr><td><b>Report writing</b></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td style="background:#555"></td></tr>
+</table>
 
-    section Done
-    Study and model selection               :done, a1, 2026-05-04, 3w
-    MVP pipeline, logging, dashboard        :done, a2, 2026-05-25, 1w
-    Requirements and this report            :done, a3, 2026-07-13, 3w
-
-    section Remaining
-    Frame times, openings, direction test   :b1, 2026-08-04, 2w
-    Phone expansion check                   :b2, 2026-08-11, 2w
-    Guidance delivery and capability levels :b3, 2026-08-18, 2w
-    Setup flow and server lookup            :b4, 2026-08-25, 1w
-
-    section Finish
-    Testing and final report                :c1, 2026-09-01, 1w
-```
-
-The user trials in §8.3 need ethics approval and an instructor present, so they are planned separately and fall after this deadline.
+The user trials described in §8.3 need ethics approval and an orientation-and-mobility instructor present, so they are planned separately and fall after this deadline.
 
 ---
 

@@ -2,6 +2,13 @@ import gradio as gr
 from .processor import process_frame, on_reset
 from .dashboard import build_dashboard_content
 
+# Gradio 5+ replaced `mirror_webcam` with `webcam_options`. Mirroring must stay
+# off either way — a flipped frame would swap step_left / step_right.
+if hasattr(gr, "WebcamOptions"):
+    _NO_MIRROR = {"webcam_options": gr.WebcamOptions(mirror=False)}
+else:
+    _NO_MIRROR = {"mirror_webcam": False}
+
 
 def build_ui():
     with gr.Blocks(title="WalkSafe", theme=gr.themes.Default()) as demo:
@@ -26,7 +33,7 @@ def build_ui():
                             sources=["webcam"],
                             streaming=True,
                             label="📷 Phone Camera",
-                            mirror_webcam=False,
+                            **_NO_MIRROR,
                         )
                         reset_btn = gr.Button("🔄 Reset Tracker", variant="secondary")
                         status    = gr.Textbox(label="Status", value="Ready.",
