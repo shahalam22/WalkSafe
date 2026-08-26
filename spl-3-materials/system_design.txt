@@ -1,0 +1,36 @@
+Raw Egocentric Video (30fps, Global South streets)/live-stream
+                    ↓
+           ┌─ PHASE 1: PREPROCESS ───────┐
+           │  Extract keyframes            │  every 5th frame
+           │  Resize to 518×H              │  multiple of 14 for ViT
+           └────────────────────────┘
+                    ↓
+           ┌─ PHASE 2: PERCEPTION ──────────────────────────┐
+           │                                                        │
+           │  Depth Pro          RAFT-Small        YOLOv8n          │
+           │  (metric depth)     (optical flow)    + ByteTrack      │
+           │  H×W float32        H×W×2 vectors     boxes+tid+hist   │
+           │                                                        │
+           └───────────────────────────────────────────┘
+                    ↓
+           ┌─ PHASE 3: DERIVE ─────────────────────────────┐
+           │                                                        │
+           │  Ego signals          Agent signals     Zone signals   │
+           │  ─────────         ──────────     ─────────    │
+           │  ego_speed_ms         dist_m            blocked_pct    │
+           │  flow_centroid_x      dist_m_sigma      mean_depth_m   │
+           │  flow_lateral_ratio   approach_speed    flow_net_ego   │
+           │  flow_rotation_score  ttc_s             n_detections   │
+           │  lateral_drift        heading_deg       min_ttc_s      │
+           │  speed_trend          motion_class      uncertain_pct  │
+           │  camera_action        relative_pos                     │
+           │                       angle_from_fwd                   │
+           │                       track_age                        │
+           └───────────────────────────────────────────┘
+                    ↓
+           ┌─ PHASE 4: Instruction ──────────────────────────┐
+           │                                                         │
+           │  We will generate instruction for the visually impaired │
+           │  Persons so that they can navigate easily               │
+           │                                                         │
+	   └────────────────────────────────────────────┘
