@@ -18,7 +18,6 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
     from walksafe.perception.flow import RaftSmall
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch.backends.cudnn.benchmark = True      # every frame has the same size
     log.info("Device: %s", device)
     models = Models(
         depth    = DepthPro(cfg.depth_model_id, device, cfg.depth_fp16),
@@ -40,7 +39,7 @@ def warm_up(models: Models, height: int = 378, width: int = 518) -> dict[str, fl
     }
     timings = {}
     for name, run in steps.items():
-        log.info("Warming up %s (DepthPro can take tens of seconds the first time)", name)
+        log.info("Warming up %s", name)
         for attempt in ("first", "warm"):
             start = time.perf_counter()
             run()
