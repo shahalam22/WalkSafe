@@ -46,6 +46,7 @@ class ModelConfig:
     # computed in the background, so a map can be several seconds old (it was with the
     # prototype too). False: a frame waits for fresh depth, as SRS §7.3 intends.
     depth_in_background: bool = True
+    first_depth_wait_s:  float = 1.0      # a session's first frame waits this long for depth at most
     resize_width:    int   = 518
     # Speed options measured by scripts/benchmark.py (NFR-4).
     depth_fp16:      bool  = False

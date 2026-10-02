@@ -266,7 +266,8 @@ function checkLoop() {
 function showResult(r) {
   if (r.panel_jpeg) $("annotated").src = `data:image/jpeg;base64,${r.panel_jpeg}`;
   const detail = r.detail ? ` - ${r.detail}` : "";
-  $("command").textContent = `${r.phrase}${detail}  (${r.level}, depth ${r.depth_age_s} s old, ${r.server_ms} ms)`;
+  const depth = r.depth_age_s === null ? "no depth yet" : `depth ${r.depth_age_s} s old`;
+  $("command").textContent = `${r.phrase}${detail}  (${r.level}, ${depth}, ${r.server_ms} ms)`;
 }
 
 function showRate(closing) {

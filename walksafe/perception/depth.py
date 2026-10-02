@@ -21,9 +21,12 @@ class DepthModel:
         self.model     = AutoModelForDepthEstimation.from_pretrained(model_id).to(device, self.dtype).eval()
         self.last_fov_deg: float | None = None
         self._lock = threading.Lock()           # background refreshes and setup checks share it
+        # Its own CUDA stream, so its long runs do not hold up the per-frame models,
+        # which run on a higher-priority stream.
+        self.stream = torch.cuda.Stream() if device == "cuda" else None
 
     def estimate(self, frame_bgr: np.ndarray) -> np.ndarray:
-        with self._lock:
+        with self._lock, torch.cuda.stream(self.stream):
             return self._estimate(frame_bgr)
 
     def _estimate(self, frame_bgr: np.ndarray) -> np.ndarray:

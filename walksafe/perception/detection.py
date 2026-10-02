@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+import torch
 from ultralytics import YOLO
 from ultralytics.trackers.byte_tracker import BYTETracker
 from ultralytics.utils import IterableSimpleNamespace
@@ -14,8 +15,10 @@ log = logging.getLogger(__name__)
 class YoloTracker:
     def __init__(self, cfg: ModelConfig):
         log.info("Loading YOLO (%s)", cfg.yolo_model)
-        self.model = YOLO(cfg.yolo_model)
-        self.cfg   = cfg
+        self.model  = YOLO(cfg.yolo_model)
+        self.cfg    = cfg
+        # High priority: each frame's work goes ahead of a background depth run.
+        self.stream = torch.cuda.Stream(priority=-1) if torch.cuda.is_available() else None
 
     def new_tracker(self) -> BYTETracker:
         c = self.cfg
@@ -25,9 +28,10 @@ class YoloTracker:
             track_buffer=c.track_buffer, match_thresh=c.match_thresh, fuse_score=True))
 
     def track(self, frame_bgr: np.ndarray, tracker: BYTETracker) -> list[Box]:
-        result = self.model.predict(frame_bgr, conf=self.cfg.yolo_conf,
-                                    classes=list(self.cfg.agent_classes), verbose=False)[0]
-        det    = result.boxes.cpu().numpy()
+        with torch.cuda.stream(self.stream):
+            result = self.model.predict(frame_bgr, conf=self.cfg.yolo_conf,
+                                        classes=list(self.cfg.agent_classes), verbose=False)[0]
+            det    = result.boxes.cpu().numpy()
         boxes, tracked = [], set()
         for x1, y1, x2, y2, tid, score, cls, idx in tracker.update(det, frame_bgr):
             tracked.add(int(idx))

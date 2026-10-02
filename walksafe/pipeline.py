@@ -1,7 +1,7 @@
 """One frame through perception, interpretation and decision."""
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, wait
 from dataclasses import dataclass, field
 
 import cv2
@@ -34,7 +34,7 @@ class FrameResult:
     ego:       Ego
     decision:  Decision
     level:     str            # "L0", or "L1" when visibility or confidence is poor
-    depth_age_s: float = 0.0  # how old the depth map behind this result is
+    depth_age_s: float | None = 0.0   # how old the depth map behind this result is
     timings:   dict[str, float] = field(default_factory=dict)    # milliseconds per stage
 
     @property
@@ -67,6 +67,10 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
         prev_depth = s.depth_arr
         depth      = latest_depth(models, s, frame, capture_ts, cfg)
         timer.lap("depth")
+        if depth is None:          # the first depth map is still being computed
+            d = decision.decide([], None, 0.0, s.profile, cfg)
+            d = Decision(d.command, "measuring depth", f"waiting_for_first_depth | {d.reason}", 0.0)
+            return FrameResult(frame, capture_ts, q, None, None, [], None, s.ego, d, "L1", None, timer.laps)
 
         boxes  = models.detector.track(frame, s.tracker)
         agents = agents_.measure(boxes, depth, capture_ts, s.tracks, s.profile, cfg.agents)
@@ -94,17 +98,25 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
                            round(capture_ts - s.depth_ts, 2), timer.lap("rules"))
 
 
-def latest_depth(models: Models, s: Session, frame: np.ndarray, ts: float, cfg: Config = CFG) -> np.ndarray:
-    """The depth map to use for this frame, refreshing it when it is older than the cap."""
+def latest_depth(models: Models, s: Session, frame: np.ndarray, ts: float,
+                 cfg: Config = CFG) -> np.ndarray | None:
+    """The depth map to use for this frame, refreshing it when it is older than the cap.
+    In the background mode this is None until the session's first map is ready."""
     if s.depth_job is not None and s.depth_job.done():
         s.depth_arr, s.depth_ts = s.depth_job.result()      # a fault surfaces here
         s.depth_job = None
     stale = s.depth_arr is None or ts - s.depth_ts > cfg.models.depth_max_age_s
-    if stale and (s.depth_arr is None or not cfg.models.depth_in_background):
+    if stale and not cfg.models.depth_in_background:
         s.depth_arr, s.depth_ts = models.depth.estimate(frame) * s.profile.depth_scale, ts
     elif stale and s.depth_job is None:
         scale, snapshot = s.profile.depth_scale, frame.copy()
         s.depth_job = in_background(lambda: (models.depth.estimate(snapshot) * scale, ts))
+    if s.depth_arr is None and s.depth_job is not None:
+        # A fast model gives the first map almost at once; a slow one is not waited for.
+        wait([s.depth_job], timeout=cfg.models.first_depth_wait_s)
+        if s.depth_job.done():
+            s.depth_arr, s.depth_ts = s.depth_job.result()
+            s.depth_job = None
     return s.depth_arr
 
 

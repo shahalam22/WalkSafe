@@ -107,3 +107,29 @@ def test_new_close_agent_lowers_the_level_to_l1():
     m = fake_models(depth=FakeDepth(2.0), detector=FakeDetector([Box(200, 150, 260, 350, 0, 0.9, -1)]))
     (r,) = run(m, session(m), [0.0])
     assert r.level == "L1" and "not yet tracked" in r.decision.reason
+
+
+def test_first_frame_does_not_wait_for_a_slow_depth_model():
+    import threading
+    import time
+
+    class VerySlowDepth(FakeDepth):
+        def __init__(self):
+            super().__init__(4.0)
+            self.release = threading.Event()
+
+        def estimate(self, frame_bgr):
+            self.release.wait(5)
+            return super().estimate(frame_bgr)
+
+    depth = VerySlowDepth()
+    m = fake_models(depth=depth)
+    s = session(m)
+    t0 = time.perf_counter()
+    r = pipeline.process(m, s, frame(0), 0.0)
+    assert time.perf_counter() - t0 < 2.0
+    assert r.decision.command == "slow_down" and r.decision.detail == "measuring depth"
+    assert r.level == "L1" and r.depth_age_s is None
+    depth.release.set()
+    s.depth_job.result(timeout=5)
+    assert pipeline.process(m, s, frame(1), 0.5).depth_arr is not None

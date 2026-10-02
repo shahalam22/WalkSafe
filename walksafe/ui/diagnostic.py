@@ -52,7 +52,8 @@ def render(r, cfg: Config = CFG):
     """pipeline.FrameResult -> RGB image of the fusion panel stacked on the advisory strip."""
     if r.depth_arr is None:
         panel = r.frame_bgr.copy()
-        cv2.putText(panel, f"FRAME REJECTED: {r.quality.cause}", (10, 30), FONT, 0.8, (0, 0, 255), 2)
+        why   = f"FRAME REJECTED: {r.quality.cause}" if not r.quality.ok else "MEASURING DEPTH..."
+        cv2.putText(panel, why, (10, 30), FONT, 0.8, (0, 0, 255), 2)
     else:
         panel = build_panel(r, cfg)
     strip = build_advisory(r, cfg)

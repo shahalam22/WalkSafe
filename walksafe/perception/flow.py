@@ -16,8 +16,14 @@ class RaftSmall:
         self.scale      = scale
         self.transforms = weights.transforms()
         self.model      = raft_small(weights=weights).to(device).eval()
+        # High priority: each frame's work goes ahead of a background depth run.
+        self.stream     = torch.cuda.Stream(priority=-1) if device == "cuda" else None
 
     def compute(self, prev_bgr: np.ndarray, curr_bgr: np.ndarray) -> np.ndarray:
+        with torch.cuda.stream(self.stream):
+            return self._scaled(prev_bgr, curr_bgr)
+
+    def _scaled(self, prev_bgr, curr_bgr):
         if self.scale != 1.0:
             H, W  = prev_bgr.shape[:2]
             small = (int(W * self.scale), int(H * self.scale))
