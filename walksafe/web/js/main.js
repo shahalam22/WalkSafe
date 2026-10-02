@@ -3,6 +3,7 @@
 import { Api, sleep, uploadLoop } from "./api.js";
 import { clockMs, closeCamera, FrameGrabber, openCamera } from "./capture.js";
 import { CONFIG } from "./config.js";
+import { ExpansionCheck } from "./expansion.js";
 import { Guidance } from "./guidance.js";
 import { checkFrame } from "./quality.js";
 import { Speaker } from "./speech.js";
@@ -12,6 +13,7 @@ const server = new URLSearchParams(location.search).get("server") ?? "";
 const api = new Api(server, { timeoutMs: CONFIG.request_timeout_ms });
 const speaker = new Speaker();
 const guidance = new Guidance({ output: speaker, now: clockMs, cfg: CONFIG });
+const expansion = new ExpansionCheck(CONFIG);
 const settings = loadSettings();
 
 let running = false;
@@ -89,12 +91,16 @@ async function stop(reason = "user") {
   $("status").textContent = "Guidance stopped.";
 }
 
-// The checks that run on every frame on the phone.
+// The checks that run on every frame on the phone. A stop from the expansion
+// check goes straight to guidance, without waiting for the server (FR-16).
 function checkLoop() {
   if (!running) return;
   if (grabber.ready()) {
     const g = grabber.gray();
     quality = checkFrame(g.data, g.width, g.height, CONFIG);
+    const closing = expansion.update(g.data, g.width, g.height, g.ts);
+    if (closing.stop) guidance.phoneStop();
+    else guidance.phoneClear();
   }
   setTimeout(checkLoop, 1000 / CONFIG.capture_fps);
 }

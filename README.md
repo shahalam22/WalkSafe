@@ -28,6 +28,7 @@ The phone opens a web page served by the same server; there is no app to install
 | Ego Motion Analysis | Walking speed, sideways steps and turns from optical flow and metric depth |
 | Navigation Commands | Spoken guidance: `walk_forward`, `stop`, `step_left`, `step_right`, `turn_left`, `turn_right`, `yield`, `slow_down` |
 | Phone page | One large start/stop control, checks on the phone, earcon + speech + vibration |
+| On-phone stop | Expansion check on a 96×72 copy: time to contact from how fast the image grows; no model, no network; overrides the server |
 | Session Logging | All frames, agents, gaps, and decisions recorded to SQLite |
 | Analytics Dashboard | Per-session metrics, command histograms, speed profiles, and risk distributions |
 
@@ -163,7 +164,11 @@ returns 500 `{"error": "pipeline_fault"}` and the session carries on.
 6. Press the large button again to stop.
 
 The page checks each frame on the phone (too dark, too bright, blurred) and does not
-send unusable ones. It keeps one request in flight and always sends the newest frame;
+send unusable ones. It also runs the **expansion check** at about 12 fps: blocks on a
+grid are matched between frames, the mean motion is removed, and the remaining
+outward growth in the centre gives a time to contact. Below 1.5 s for three frames
+in a row, the phone says `stop` at once, and no server command is spoken until the
+scene stops closing in. It keeps one request in flight and always sends the newest frame;
 results older than 2 s, or older than one already handled, are dropped.
 
 ### Dashboard

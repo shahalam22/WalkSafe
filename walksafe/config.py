@@ -146,6 +146,21 @@ class PhoneConfig:
     request_timeout_ms:   int   = 3000
     max_messages_per_min: int   = 15      # NFR-13
     step_min_interval_ms: int   = 2000    # SRS UC-4: steps no more often than every 2 s
+    # Expansion check (FR-16): block matching on the 96x72 copy. All untuned.
+    expansion_block_px:     int   = 3       # half-size of the matched block (7x7)
+    expansion_search_px:    int   = 4
+    expansion_grid_px:      int   = 6
+    expansion_min_texture:  float = 60      # grey-level variance a block needs to be tracked
+    expansion_min_points:   int   = 20
+    expansion_region_left:  float = 0.2     # where divergence is measured: the centre,
+    expansion_region_right: float = 0.8     # above the nearby ground
+    expansion_region_top:    float = 0.15
+    expansion_region_bottom: float = 0.7
+    expansion_max_gap_ms:   int   = 300     # frames further apart are not compared
+    ttc_stop_s:             float = 1.5
+    ttc_clear_s:            float = 2.5
+    stop_frames:            int   = 3
+    clear_frames:           int   = 5
 
 
 @dataclass(frozen=True)
