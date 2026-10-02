@@ -36,31 +36,17 @@ The system runs in a Gradio web app accessible from any smartphone browser. It s
 ## Architecture
 
 ```
-app.py                  # Entry point — loads models, launches Gradio
-config.py               # All tunable thresholds and parameters
-models.py               # Model loading (DepthPro, YOLO, RAFT, speaker, DB)
-state.py                # Thread-safe shared application state
-
-pipeline/
-  depth.py              # DepthPro inference + depth map extraction
-  detection.py          # YOLOv8 detection, tracking, risk assessment
-  flow.py               # RAFT optical flow + ego motion classification
-  gaps.py               # Navigable gap detection from depth + detections
-  suggestion.py         # Navigation decision logic
-  fusion.py             # Visualization panel + advisory strip rendering
-
-audio/
-  speaker.py            # Web Speech API TTS interface
-
-ui/
-  layout.py             # Gradio layout (Navigation + Dashboard tabs)
-  processor.py          # Full per-frame pipeline orchestration
-  dashboard.py          # Analytics dashboard with charts
-
-storage/
-  schema.py             # SQLite schema (sessions, frames, agents, gaps)
-  writer.py             # Async batch writer (non-blocking, 50-frame flush)
-  queries.py            # SQL queries for dashboard
+walksafe/
+  __main__.py           # python -m walksafe: loads models, launches Gradio
+  config.py             # every tunable threshold (dataclasses, optional YAML override)
+  pipeline.py           # one frame through perception -> interpretation -> decision
+  session.py            # per-user state carried between frames
+  decision.py           # nine-command vocabulary and the decision rules
+  perception/           # DepthPro, YOLOv8 + ByteTrack, RAFT-Small behind small Protocols
+  interpretation/       # agents (motion, TTC, risk), ego motion, openings
+  storage/              # SQLite schema, async writer, dashboard queries
+  ui/                   # Gradio navigation tab, fusion panel, dashboard
+tests/                  # pytest, CPU only, fake models
 ```
 
 ---
@@ -90,7 +76,7 @@ Risk levels assigned to each tracked agent:
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - CUDA-capable GPU strongly recommended (CPU fallback is very slow)
 - ~4 GB VRAM for DepthPro + RAFT + YOLO loaded together
 
@@ -118,7 +104,7 @@ matplotlib>=3.7.0
 ## Running the App
 
 ```bash
-python app.py
+python -m walksafe
 ```
 
 Gradio will print a local URL (and a public share link). Open the link on the device whose camera you want to use — typically a smartphone.
@@ -154,7 +140,7 @@ Select a session from the dropdown and click **Load** to view:
 
 ## Configuration
 
-All parameters are in [config.py](config.py). Key values:
+All parameters are in [walksafe/config.py](walksafe/config.py). Key values:
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -191,10 +177,10 @@ WalkSafe runs well on a free Colab GPU runtime. Expected throughput is approxima
 !git clone <repo-url>
 %cd WalkSafe
 !pip install -r requirements.txt
-!python app.py
+!python -m walksafe
 ```
 
-The `share=True` flag in `app.py` creates a public Gradio tunnel automatically.
+The `share=True` flag in `walksafe/__main__.py` creates a public Gradio tunnel automatically.
 
 ---
 

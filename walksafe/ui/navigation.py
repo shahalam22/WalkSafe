@@ -1,6 +1,14 @@
+"""Gradio webcam front end from the prototype; replaced by the phone page in walksafe/web."""
+import cv2
 import gradio as gr
-from .processor import process_frame, on_reset
-from .dashboard import build_dashboard_content
+import numpy as np
+from PIL import Image
+
+from walksafe import pipeline, storage
+from walksafe.perception import Models
+from walksafe.session import Session
+from walksafe.ui import diagnostic
+from walksafe.ui.dashboard import build_dashboard_content
 
 # Gradio 5+ replaced `mirror_webcam` with `webcam_options`. Mirroring must stay
 # off either way — a flipped frame would swap step_left / step_right.
@@ -10,7 +18,27 @@ else:
     _NO_MIRROR = {"mirror_webcam": False}
 
 
-def build_ui():
+def build_ui(models: Models):
+    state = {"session": Session()}
+
+    def process_frame(pil_image):
+        if pil_image is None:
+            blank = np.zeros((400, 300, 3), dtype=np.uint8)
+            cv2.putText(blank, "Waiting for camera...", (20, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+            return Image.fromarray(blank), ""
+
+        s         = state["session"]
+        frame_bgr = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+        r         = pipeline.process(models, s, frame_bgr)
+        storage.enqueue(s.frame_idx, r.command, r.detail, r.reasoning, r.ego, r.gaps, r.dets)
+        return Image.fromarray(diagnostic.render(r, s.track_history)), r.phrase
+
+    def on_reset():
+        storage.new_session()
+        state["session"] = Session()
+        return None, "State reset. Ready."
+
     with gr.Blocks(title="WalkSafe", theme=gr.themes.Default()) as demo:
         with gr.Tabs():
 
@@ -51,7 +79,8 @@ def build_ui():
                 reset_btn.click(fn=on_reset, inputs=[], outputs=[output_img, status])
                 tts_box.change(
                     fn=None, inputs=[tts_box], outputs=[],
-                    js="(t) => { if (!t) return; window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }"
+                    js="(t) => { if (!t) return; window.speechSynthesis.cancel(); "
+                       "window.speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }"
                 )
 
             with gr.Tab("Dashboard"):

@@ -1,45 +1,37 @@
-from config import CFG
+from walksafe.config import CFG, AgentConfig, OpeningConfig
 
-# Commands mirror the action taxonomy so they're directly usable
-# as navigation instructions or VLA training labels
-VALID_COMMANDS = {
+# SRS §2.4, most cautious first.
+COMMANDS = (
     "stop",
     "yield",
     "slow_down",
-    "walk_forward",
     "walk_forward_slow",
     "step_left",
     "step_right",
     "turn_left",
     "turn_right",
+    "walk_forward",
+)
+
+PHRASES = {
+    "stop":              "Stop",
+    "yield":             "Yield. Wait",
+    "slow_down":         "Slow down",
+    "walk_forward":      "Walk forward",
+    "walk_forward_slow": "Walk forward slowly",
+    "step_left":         "Step left",
+    "step_right":        "Step right",
+    "turn_left":         "Turn left",
+    "turn_right":        "Turn right",
 }
 
-SUGGESTION_COLOR = {
-    "stop":              (0,   0,   220),
-    "yield":             (0,   180, 255),
-    "slow_down":         (0,   100, 255),
-    "walk_forward":      (0,   200,  80),
-    "walk_forward_slow": (0,   180, 160),
-    "step_left":         (255, 160,   0),
-    "step_right":        (255, 120,   0),
-    "turn_left":         (200,  80, 255),
-    "turn_right":        (140,  60, 255),
-}
+
+def phrase(command):
+    return PHRASES.get(command, command.replace("_", " "))
 
 
-def decide(dets, gap_list):
-    """
-    Pure decision logic. No rendering, no ego action dependency.
-
-    Inputs:
-        dets      — list of agent dicts from detection.run()
-        gap_list  — list of gap dicts from gaps.find()
-
-    Returns:
-        command   — one of VALID_COMMANDS  e.g. "step_right"
-        detail    — short context string   e.g. "1.4m gap at 2.1m"
-        reasoning — structured string for DB storage
-    """
+def decide(dets, gap_list, agents: AgentConfig = CFG.agents, openings: OpeningConfig = CFG.openings):
+    """Returns (command, detail, reasoning)."""
     RISK_ORDER  = {"critical":0, "high":1, "moderate":2, "low":3}
     top_agents  = sorted(dets,
                          key=lambda d: (RISK_ORDER.get(d["risk_level"], 3), d["dist_m"]))
@@ -49,7 +41,7 @@ def decide(dets, gap_list):
     crossing    = [a for a in top_agents if "crossing" in a["motion"]]
     best_gap    = max(gap_list, key=lambda g: g["width_px"]) if gap_list else None
 
-    # ── Rule 1: Critical agent — stop immediately ─────────────────────
+    # Rule 1: critical agent
     if critical:
         a   = critical[0]
         ttc = f" TTC {a['ttc_s']:.1f}s" if a.get("ttc_s") and a["ttc_s"] < 10 else ""
@@ -59,7 +51,7 @@ def decide(dets, gap_list):
             f"critical:{a['name']}:{a['motion']}:{a['dist_m']}m"
         )
 
-    # ── Rule 2: No gap ────────────────────────────────────────────────
+    # Rule 2: no gap
     if not gap_list:
         return (
             "stop",
@@ -67,7 +59,7 @@ def decide(dets, gap_list):
             "no_gap"
         )
 
-    # ── Rule 3: Crossing agent with very short TTC ────────────────────
+    # Rule 3: crossing agent with short TTC
     if crossing:
         a   = crossing[0]
         ttc = a.get("ttc_s")
@@ -78,36 +70,36 @@ def decide(dets, gap_list):
                 f"crossing:{a['name']}:{ttc:.1f}s"
             )
 
-    # ── Rule 4: Approaching agent — slow or yield ─────────────────────
+    # Rule 4: approaching agent
     if approaching:
         a   = approaching[0]
         ttc = a.get("ttc_s")
-        if ttc and ttc < CFG["ttc_critical"]:
+        if ttc and ttc < agents.ttc_critical:
             return (
                 "stop",
                 f"{a['name']} approaching {a['dist_m']:.1f}m TTC {ttc:.1f}s",
                 f"approaching_critical:{a['name']}:{a['dist_m']}m"
             )
-        if ttc and ttc < CFG["ttc_urgent"]:
+        if ttc and ttc < agents.ttc_urgent:
             return (
                 "yield",
                 f"{a['name']} approaching {a['dist_m']:.1f}m",
                 f"approaching_urgent:{a['name']}:{a['dist_m']}m"
             )
-        if a["dist_m"] < CFG["close_distance_m"]:
+        if a["dist_m"] < agents.close_distance_m:
             return (
                 "slow_down",
                 f"{a['name']} ahead {a['dist_m']:.1f}m",
                 f"approaching_close:{a['name']}:{a['dist_m']}m"
             )
 
-    # ── Rule 5: Route toward best gap ─────────────────────────────────
+    # Rule 5: route toward the best gap
     dir_    = best_gap["direction"]
     width_m = best_gap["width_m"]
     dist_m  = best_gap["dist_m"]
     detail  = f"{width_m:.1f}m gap {dist_m:.1f}m away"
 
-    if width_m < CFG["gap_tight"]:
+    if width_m < openings.tight_m:
         cmd_map = {"ahead": "walk_forward_slow", "right": "step_right", "left": "step_left"}
         cmd     = cmd_map.get(dir_, "slow_down")
         return (
@@ -138,7 +130,7 @@ def decide(dets, gap_list):
             f"gap_left:{width_m}m:{dist_m}m"
         )
 
-    # ── Fallback ──────────────────────────────────────────────────────
+    # Fallback
     return (
         "slow_down",
         "assess surroundings",

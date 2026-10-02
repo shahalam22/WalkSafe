@@ -1,0 +1,26 @@
+[project]
+name = "walksafe"
+version = "0.2.0"
+description = "Real-time navigation aid for blind and low-vision pedestrians"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["walksafe"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+extend-exclude = ["SRS_12_Batch", "spl-3-materials", "*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# The code aligns assignments and keeps short guard clauses on one line.
+ignore = ["E701", "E702", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not gpu'"
+markers = ["gpu: needs a CUDA GPU and the real model weights"]
+
+[tool.coverage.run]
+source = ["walksafe"]

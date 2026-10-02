@@ -4,12 +4,13 @@ Embedded as a tab in the main app via build_dashboard_content(demo).
 Run standalone: python -m ui.dashboard
 """
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import gradio as gr
+import matplotlib.pyplot as plt
 import pandas as pd
 
-from storage import queries
+from walksafe.storage import queries
 
 _RISK_COLORS = {
     "critical": "#e74c3c",

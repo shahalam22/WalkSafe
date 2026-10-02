@@ -1,10 +1,13 @@
-import sqlite3
+import logging
 import queue
+import sqlite3
 import threading
 import time
 import uuid
 
 from .schema import DB_PATH, create_tables
+
+log = logging.getLogger(__name__)
 
 BATCH_SIZE    = 50
 FLUSH_EVERY_S = 5.0
@@ -20,7 +23,7 @@ def init():
     _session_id = str(uuid.uuid4())
     _thread = threading.Thread(target=_worker, daemon=True)
     _thread.start()
-    print(f"✅ DB ready   session={_session_id[:8]}   path={DB_PATH}")
+    log.info("DB ready, session=%s path=%s", _session_id[:8], DB_PATH)
 
 
 def enqueue(frame_idx, command, detail, reasoning, ego, gap_list, dets):
@@ -44,8 +47,6 @@ def new_session():
     """Call on reset — closes current session and starts a fresh one."""
     _queue.put_nowait({"_new_session": True, "ts": time.time()})
 
-
-# ── Internal ───────────────────────────────���──────────────────────────────────
 
 def _worker():
     global _session_id
@@ -83,8 +84,8 @@ def _worker():
             if batch:
                 _flush(con, batch, _session_id)
                 batch, last_flush = [], time.time()
-        except Exception as e:
-            print(f"⚠️  DB write error: {e}")
+        except Exception:
+            log.exception("DB write error")
 
 
 def _close_session(con, session_id, ended_at):

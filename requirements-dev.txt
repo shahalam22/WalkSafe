@@ -1,0 +1,7 @@
+# The tests never import torch, ultralytics or transformers, so a CPU machine
+# only needs these plus the light half of requirements.txt.
+-r requirements.txt
+pytest>=8,<10
+pytest-cov>=5,<8
+hypothesis>=6.100,<7
+ruff>=0.6,<1
