@@ -125,6 +125,7 @@ class QualityConfig:
 class SetupConfig:
     depth_check_max_error: float = 0.25    # setup is refused beyond this (FR-23)
     depth_check_centre:    float = 0.2     # fraction of width and height measured at the centre
+    direction_min_step_m:  float = 0.15    # the direction test needs a sideways move at least this big
     fov_min_deg:           float = 40.0    # a model estimate outside this range is not used
     fov_max_deg:           float = 100.0
 
@@ -191,7 +192,7 @@ class PhoneConfig:
     event_flush_ms:         int   = 5000
     max_queued_events:      int   = 500
     # Spoken setup (FR-23)
-    direction_test_ms:      int   = 5000
+    direction_step_ms:      int   = 2500    # time for the step between the two pictures
     max_pitch_deg:          float = 25      # aim check: phone roughly level
     shoulder_narrow_m:      float = 0.38
     shoulder_average_m:     float = 0.45

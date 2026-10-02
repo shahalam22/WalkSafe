@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { judgeDirection, runSetup, SetupRejected } from "../../walksafe/web/js/setup.js";
+import { runSetup, SetupRejected } from "../../walksafe/web/js/setup.js";
 
 const CFG = {
-  direction_test_ms: 1000, max_pitch_deg: 25, shoulder_narrow_m: 0.38, shoulder_average_m: 0.45,
+  direction_step_ms: 2500, setup_timeout_ms: 30000, max_pitch_deg: 25, shoulder_narrow_m: 0.38, shoulder_average_m: 0.45,
   shoulder_wide_m: 0.52, mount_chest_m: 1.3, mount_hand_m: 1.1,
 };
 
 // Answers are given in order; each question asked is recorded with its choices.
-function setup({ answers, egoAction = "stepping_left", depth = { passed: true, measured_m: 1.6, depth_scale: 0.94, fov_deg: 68 },
+function setup({ answers, direction = { verdict: "left", lateral_m: -0.42 }, depth = { passed: true, measured_m: 1.6, depth_scale: 0.94, fov_deg: 68 },
                  pitches = [0] }) {
   const asked = [], said = [], sent = [];
   const clock = { t: 0 };
@@ -18,7 +18,7 @@ function setup({ answers, egoAction = "stepping_left", depth = { passed: true, m
     startSession: async (profile, purpose) => { sent.push({ profile, purpose }); return "setup-1"; },
     endSession: async () => {},
     depthCheck: async () => (typeof depth === "function" ? depth() : depth),
-    sendFrame: async () => { clock.t += 300; return { ego_action: typeof egoAction === "function" ? egoAction() : egoAction }; },
+    directionCheck: async () => (typeof direction === "function" ? direction() : direction),
   };
   const ctx = {
     cfg: CFG, api, base: { user_id: "u1", verbosity: "normal" },
@@ -66,14 +66,15 @@ test("declining consent gives a phone-only profile and sends nothing", async () 
 
 test("T1 a reversed direction test blocks use", async () => {
   // What a build with swapped polarity would report for a step to the left.
-  const { ctx } = setup({ answers: HAPPY, egoAction: "stepping_right" });
+  const { ctx } = setup({ answers: HAPPY, direction: { verdict: "right", lateral_m: 0.4 } });
   await assert.rejects(runSetup(ctx), (e) => e instanceof SetupRejected && /reversed/.test(e.message));
 });
 
 test("an unclear step is offered again, and stopping rejects setup", async () => {
-  const { ctx } = setup({ answers: ["ok", "yes", "chest", "1.5", "ready", "ready", "stop"],
-                          egoAction: "standing_still" });
+  const { ctx, asked } = setup({ answers: ["ok", "yes", "chest", "1.5", "ready", "ready", "stop"],
+                                 direction: { verdict: "unclear", lateral_m: -0.05 } });
   await assert.rejects(runSetup(ctx), SetupRejected);
+  assert.match(asked.at(-1).q, /sideways move measured 0.05 metres/);
 });
 
 test("a failed depth check can be retried", async () => {
@@ -101,11 +102,14 @@ test("a tilted phone is asked to be held level", async () => {
   assert.equal(p.mount_pitch_deg, -5);
 });
 
-test("direction verdicts", () => {
-  assert.equal(judgeDirection(["standing_still", "stepping_left"]), "pass");
-  assert.equal(judgeDirection(["stepping_right"]), "reversed");
-  assert.equal(judgeDirection(["stepping_left", "stepping_right"]), "unclear");
-  assert.equal(judgeDirection([]), "unclear");
+test("an unclear step can be retried and then pass", async () => {
+  let calls = 0;
+  const direction = () => (++calls === 1 ? { verdict: "unclear", lateral_m: null }
+                                         : { verdict: "left", lateral_m: -0.3 });
+  const answers = ["ok", "yes", "chest", "1.5", "ready", "ready", "retry", "ready", "average"];
+  const { ctx, said } = setup({ answers, direction });
+  assert.equal((await runSetup(ctx)).direction_test_passed, true);
+  assert.ok(said.includes("Direction test passed. You moved 0.3 metres to the left."));
 });
 
 test("the depth check waits for the camera's first frame", async () => {

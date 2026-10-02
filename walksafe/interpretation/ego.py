@@ -75,6 +75,16 @@ def camera_motion(flow, depth_arr, focal, exclude_boxes=(), cfg: EgoConfig = CFG
     return np.linalg.lstsq(A, b, rcond=None)[0]
 
 
+def judge_step(motion, min_step_m: float) -> dict:
+    """The setup direction test: which way the camera moved between two pictures (NFR-6)."""
+    if motion is None:
+        return {"verdict": "unclear", "lateral_m": None, "forward_m": None, "turn_deg": None}
+    tx, _, tz, _, wy, _ = motion
+    verdict = "left" if tx <= -min_step_m else "right" if tx >= min_step_m else "unclear"
+    return {"verdict": verdict, "lateral_m": round(float(tx), 2), "forward_m": round(float(tz), 2),
+            "turn_deg": round(math.degrees(float(wy)), 1)}
+
+
 def classify(speed, lateral, yaw_dps, trend, cfg: EgoConfig = CFG.ego) -> str:
     if abs(yaw_dps) >= cfg.turn_rate_dps:
         return "turning_right" if yaw_dps > 0 else "turning_left"

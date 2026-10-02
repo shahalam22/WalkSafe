@@ -154,9 +154,10 @@ Spoken, answered with buttons, and usable without sight:
    measure), and the server measures it. More than 25 % off fails setup. Otherwise the ratio
    becomes the depth scale. DepthPro's own field-of-view estimate is used when plausible,
    otherwise the standard 70°.
-5. **Direction test.** After a tone, the user steps left, and the server must report
-   `stepping_left`. If it reports `stepping_right`, left and right are reversed, and WalkSafe
-   refuses to run (NFR-6).
+5. **Direction test.** Facing an open space, the user takes one big step left between two
+   tones. The phone takes a picture at each tone, and the server measures how far the camera
+   moved sideways between them. At least 15 cm left passes. 15 cm to the right means left and
+   right are reversed, and WalkSafe refuses to run (NFR-6).
 6. **Shoulder width** (narrow, average, broad), used to judge openings.
 
 The profile is kept in the browser's storage and sent when a session starts. The server
@@ -235,6 +236,7 @@ user's width.
 | `POST /api/session/end` | `{"session_id", "reason"}` | `{"ok": true}` |
 | `POST /api/frame` | multipart: `session_id`, `seq`, `capture_ts` (phone clock, ms), `image` (JPEG, 518 px wide) | the decision, below |
 | `POST /api/setup/depth` | multipart: `session_id`, `known_distance_m`, `image` | `{"measured_m", "depth_scale", "error_frac", "passed", "fov_deg"}` |
+| `POST /api/setup/direction` | multipart: `session_id`, `before`, `after` (pictures either side of a step left) | `{"verdict": "left" \| "right" \| "unclear", "lateral_m", "forward_m", "turn_deg"}` |
 | `POST /api/event` | `{"session_id", "events": [...]}` (level changes, deliveries, phone stops, battery) | `{"ok", "accepted"}` |
 | `GET /server.json`, `GET /js/config.js` | | where the server is; the page's settings, generated from `config.py` |
 

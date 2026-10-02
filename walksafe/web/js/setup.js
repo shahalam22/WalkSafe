@@ -16,7 +16,9 @@ const CONSENT =
 const MOUNT = "Where will you hold the phone while walking?";
 const DISTANCE = "Stand facing a flat wall. How far from it are you? Your cane's length is a good measure.";
 const FACE_WALL = "Hold the phone at chest height, pointing at the wall. Press Ready and keep still.";
-const STEP_LEFT = "Now the direction test. Hold the phone pointing ahead. After the tone, take one step to your left.";
+const STEP_LEFT =
+  "Now the direction test. Turn to face an open space, not a wall. Hold the phone upright, pointing ahead, " +
+  "and stand still. At the first tone, take one big step to your left, then stand still until the second tone.";
 const SHOULDERS = "Last question: how broad are your shoulders?";
 
 export async function runSetup(ctx) {
@@ -86,19 +88,27 @@ async function depthCheck(ctx, sessionId) {
   }
 }
 
+// Two pictures, one before and one after the step; the server measures how far
+// the camera moved sideways between them, whatever its frame rate.
 async function directionTest(ctx, sessionId) {
   for (;;) {
     await ctx.ask(STEP_LEFT, [{ key: "ready", label: "Ready" }]);
     ctx.tone();
-    const verdict = judgeDirection(await collectActions(ctx, sessionId, ctx.cfg.direction_test_ms));
-    if (verdict === "pass") {
-      ctx.say("Direction test passed.");
+    const before = await nextFrame(ctx);
+    await ctx.sleep(ctx.cfg.direction_step_ms);
+    ctx.tone();
+    const after = await nextFrame(ctx);
+    const r = await ctx.api.directionCheck(sessionId, before.blob, after.blob, ctx.cfg.setup_timeout_ms);
+    if (r.verdict === "left") {
+      ctx.say(`Direction test passed. You moved ${Math.abs(r.lateral_m)} metres to the left.`);
       return true;
     }
-    if (verdict === "reversed") {
+    if (r.verdict === "right") {
       throw new SetupRejected("left and right appear reversed on this phone. WalkSafe cannot be used until this is fixed");
     }
-    const next = await ctx.ask("The step was not clear. Try again?",
+    const moved = r.lateral_m === null ? "too little of the scene could be measured"
+                                       : `the sideways move measured ${Math.abs(r.lateral_m)} metres`;
+    const next = await ctx.ask(`The step was not clear: ${moved}. Face an open space and take one bigger step. Try again?`,
                                [{ key: "retry", label: "Try again" }, { key: "stop", label: "Stop setup" }]);
     if (next === "stop") throw new SetupRejected("the direction test did not pass");
   }
@@ -110,29 +120,4 @@ async function nextFrame({ grab, sleep }) {
     if (frame) return frame;
     await sleep(50);               // the camera has not delivered a frame yet
   }
-}
-
-export function judgeDirection(actions) {
-  const left = actions.includes("stepping_left");
-  const right = actions.includes("stepping_right");
-  if (left && !right) return "pass";
-  if (right && !left) return "reversed";
-  return "unclear";
-}
-
-// What the server's ego-motion estimate says while the user steps.
-export async function collectActions({ api, grab, now, sleep }, sessionId, durationMs) {
-  const actions = [];
-  const start = now();
-  let seq = 0;
-  while (now() - start < durationMs) {
-    const frame = await grab();
-    if (!frame) { await sleep(50); continue; }
-    try {
-      actions.push((await api.sendFrame(sessionId, ++seq, frame.ts, frame.blob)).ego_action);
-    } catch {
-      await sleep(200);
-    }
-  }
-  return actions;
 }

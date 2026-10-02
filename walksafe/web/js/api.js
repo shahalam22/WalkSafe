@@ -53,6 +53,14 @@ export class Api {
     return this.request("/api/setup/depth", { method: "POST", body: form }, timeoutMs);
   }
 
+  directionCheck(sessionId, beforeBlob, afterBlob, timeoutMs = this.timeoutMs) {
+    const form = new FormData();
+    form.append("session_id", sessionId);
+    form.append("before", beforeBlob, "before.jpg");
+    form.append("after", afterBlob, "after.jpg");
+    return this.request("/api/setup/direction", { method: "POST", body: form }, timeoutMs);
+  }
+
   postEvents(sessionId, events) {
     return this.postJson("/api/event", { session_id: sessionId, events });
   }

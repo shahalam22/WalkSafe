@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from walksafe.config import CFG
-from walksafe.interpretation.ego import classify, estimate
+from walksafe.interpretation.ego import camera_motion, classify, estimate, judge_step
 
 H, W  = 378, 518
 FOCAL = CFG.profile.focal_px(W)
@@ -97,3 +97,26 @@ def test_slowing_sharply_is_stopping():
     assert classify(0.3, 0.0, 0.0, -0.6) == "stopping"
     assert classify(2.0, 0.0, 0.0, 0.0) == "walking_fast"
     assert classify(0.4, 0.0, 0.0, 0.0) == "walking_slow"
+
+
+def test_t1_direction_test_measures_the_step_in_metres():
+    depth = depth_map()
+    left  = judge_step(camera_motion(flow_for(depth, move=(-0.4, 0, 0)), depth, FOCAL), 0.15)
+    assert left["verdict"] == "left" and left["lateral_m"] == pytest.approx(-0.4, abs=0.03)
+    right = judge_step(camera_motion(flow_for(depth, move=(0.4, 0, 0)), depth, FOCAL), 0.15)
+    assert right["verdict"] == "right"
+    small = judge_step(camera_motion(flow_for(depth, move=(-0.05, 0, 0)), depth, FOCAL), 0.15)
+    assert small["verdict"] == "unclear"
+    assert judge_step(None, 0.15)["verdict"] == "unclear"
+
+
+def test_t1_a_twist_of_the_body_is_not_a_step():
+    depth = depth_map()
+    assert judge_step(camera_motion(flow_for(depth, yaw_deg=-15), depth, FOCAL), 0.15)["verdict"] == "unclear"
+
+
+def test_t1_a_mirrored_camera_turns_a_left_step_into_right():
+    depth = depth_map()
+    flow  = flow_for(depth, move=(-0.4, 0, 0))[:, ::-1].copy()
+    flow[..., 0] *= -1
+    assert judge_step(camera_motion(flow, depth[:, ::-1].copy(), FOCAL), 0.15)["verdict"] == "right"

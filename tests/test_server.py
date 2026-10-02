@@ -301,3 +301,13 @@ def test_upload_without_content_length_is_read_with_a_cap(client):
     chunks = lambda: iter([body[:1000], body[1000:]])  # noqa: E731  (streamed: no Content-Length)
     r = client.post("/api/frame", content=chunks(), headers={"content-type": f"multipart/form-data; boundary={boundary}"})
     assert r.status_code == 200 and r.json()["seq"] == 1
+
+
+def test_direction_check_returns_a_verdict_in_a_setup_session(client):
+    sid = client.post("/api/session", json={"purpose": "setup",
+                                            "profile": {"consent_send_images": True}}).json()["session_id"]
+    files = {"before": ("b.jpg", jpeg(1), "image/jpeg"), "after": ("a.jpg", jpeg(2), "image/jpeg")}
+    body = client.post("/api/setup/direction", data={"session_id": sid}, files=files).json()
+    assert body["verdict"] in ("left", "right", "unclear") and set(body) == {"verdict", "lateral_m", "forward_m", "turn_deg"}
+    walk = start(client)
+    assert client.post("/api/setup/direction", data={"session_id": walk}, files=files).status_code == 409

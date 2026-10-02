@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from walksafe import pages, pipeline
 from walksafe.config import CFG, Config, Profile, SetupConfig, phone_js
+from walksafe.interpretation import ego
 from walksafe.perception import Models
 from walksafe.session import Session, SessionStore
 from walksafe.storage import LogWriter
@@ -121,7 +122,7 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
             writer.events(req.session_id, req.events)
         return {"ok": True, "accepted": len(req.events)}
 
-    async def read_form(request: Request, **fields):
+    async def read_form(request: Request, files=("image",), **fields):
         # Read the body with a cap before parsing: a larger upload would be spooled
         # to a temporary file. Not every proxy keeps the Content-Length header.
         if int(request.headers.get("content-length") or 0) > cfg.server.max_image_bytes:
@@ -135,7 +136,8 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         form = await request.form()
         try:
             values = {name: kind(form[name]) for name, kind in fields.items()}
-            return values, await form["image"].read()
+            images = [await form[name].read() for name in files]
+            return values, images[0] if len(images) == 1 else images
         except (KeyError, ValueError, AttributeError) as e:
             raise HTTPException(422, "bad_request") from e
 
@@ -166,6 +168,29 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         result = check_depth(depth, known_m, fov, cfg.setup)
         log.info("Session %s depth check: %s in %.0f ms", session_id[:8], result,
                  (time.perf_counter() - started) * 1000)
+        return result
+
+    @app.post("/api/setup/direction")
+    async def setup_direction(request: Request):
+        f, (before, after) = await read_form(request, files=("before", "after"), session_id=str)
+        return await run_in_threadpool(handle_direction_check, f["session_id"], before, after)
+
+    def handle_direction_check(session_id, before_data, after_data):
+        s = sessions.get(session_id)
+        if s is None:
+            raise HTTPException(404, "unknown_session")
+        if s.purpose != "setup":
+            raise HTTPException(409, "not_a_setup_session")
+        before = pipeline.resize(decode(before_data), cfg.models.resize_width)
+        after  = pipeline.resize(decode(after_data), cfg.models.resize_width)
+        if before.shape != after.shape:
+            raise HTTPException(422, "pictures_differ_in_size")
+        with gpu:
+            depth = models.depth.estimate(before) * s.profile.depth_scale
+            flow  = models.flow.compute(before, after)
+        motion = ego.camera_motion(flow, depth, s.profile.focal_px(before.shape[1]), (), cfg.ego)
+        result = ego.judge_step(motion, cfg.setup.direction_min_step_m)
+        log.info("Session %s direction check: %s", session_id[:8], result)
         return result
 
     @app.post("/api/frame")
