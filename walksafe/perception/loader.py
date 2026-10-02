@@ -40,6 +40,7 @@ def warm_up(models: Models, height: int = 378, width: int = 518) -> dict[str, fl
     }
     timings = {}
     for name, run in steps.items():
+        log.info("Warming up %s (DepthPro can take tens of seconds the first time)", name)
         for attempt in ("first", "warm"):
             start = time.perf_counter()
             run()
