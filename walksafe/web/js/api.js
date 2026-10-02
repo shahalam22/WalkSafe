@@ -67,6 +67,20 @@ export class Api {
   }
 }
 
+// Where the server is (FR-22). The page reads server.json next to itself: on
+// GitHub Pages it holds the address the notebook published today; on the
+// server itself it says "" (same origin). ?server=... overrides both.
+export async function findServer({ fetchFn = globalThis.fetch?.bind(globalThis), override = null } = {}) {
+  if (override !== null) return override;
+  try {
+    const res = await fetchFn(`server.json?t=${Date.now()}`, { cache: "no-store" });
+    if (res.ok) return (await res.json()).url ?? "";
+  } catch {
+    // Offline: try the page's own origin.
+  }
+  return "";
+}
+
 // Sends frames one after another until stopped. grab() is called only when the
 // previous request has finished, so whatever goes out is the newest frame.
 export async function uploadLoop({ api, sessionId, grab, onResult, onError, running,

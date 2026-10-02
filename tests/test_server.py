@@ -216,3 +216,7 @@ def test_depth_check_ignores_an_implausible_field_of_view(clock):
 
 def test_depth_check_only_in_a_setup_session(client):
     assert depth_check(client, start(client), 1.5).status_code == 409
+
+
+def test_server_json_points_at_the_same_origin(client):
+    assert client.get("/server.json").json() == {"url": ""}

@@ -1,5 +1,6 @@
 """HTTP API for the phone page, and the page itself."""
 import logging
+import os
 import secrets
 import threading
 import time
@@ -15,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from walksafe import pipeline, storage
+from walksafe import pages, pipeline, storage
 from walksafe.config import CFG, Config, Profile, SetupConfig, phone_js
 from walksafe.perception import Models
 from walksafe.session import Session, SessionStore
@@ -188,6 +189,11 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
             "server_ms": round((time.perf_counter() - started) * 1000, 1), "timings": r.timings,
         }
 
+    # The page asks where the server is (FR-22); here it is the page's own origin.
+    @app.get("/server.json")
+    def server_location():
+        return {"url": ""}
+
     @app.get("/js/config.js")
     def phone_config():
         return Response(phone_js(cfg), media_type="text/javascript")
@@ -226,4 +232,14 @@ def serve(app: FastAPI, port: int = CFG.server.port) -> None:
     # Gradio's share tunnel; a mounted app gets no share link of its own.
     url = setup_tunnel("127.0.0.1", port, secrets.token_urlsafe(32), None, None)
     log.info("WalkSafe is live at %s", url)
+
+    repo, token = os.environ.get("WALKSAFE_PAGES_REPO"), os.environ.get("WALKSAFE_PAGES_TOKEN")
+    if repo and token:
+        try:
+            pages.publish(url, pages.github_remote(repo, token))
+            log.info("Phone page: %s (it now points at this server)", pages.page_url(repo))
+        except Exception:
+            log.exception("Could not publish to GitHub Pages; use the address above instead")
+    else:
+        log.info("WALKSAFE_PAGES_REPO/TOKEN not set, so the fixed GitHub Pages address was not updated")
     thread.join()

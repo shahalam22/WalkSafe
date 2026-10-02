@@ -70,3 +70,19 @@ test("session start sends the profile and returns the id", async () => {
   assert.equal(id, "abc");
   assert.deepEqual(body, { purpose: "walk", profile: { consent_send_images: true } });
 });
+
+import { findServer } from "../../walksafe/web/js/api.js";
+
+test("FR-22 the page finds today's server from server.json", async () => {
+  let asked;
+  const fetchFn = async (url, init) => { asked = { url, init }; return reply(200, { url: "https://abc.gradio.live" }); };
+  assert.equal(await findServer({ fetchFn }), "https://abc.gradio.live");
+  assert.match(asked.url, /^server\.json\?t=\d+$/);
+  assert.equal(asked.init.cache, "no-store");
+});
+
+test("FR-22 without server.json the page uses its own origin, and ?server= overrides", async () => {
+  assert.equal(await findServer({ fetchFn: async () => reply(404, {}) }), "");
+  assert.equal(await findServer({ fetchFn: async () => { throw new TypeError("offline"); } }), "");
+  assert.equal(await findServer({ fetchFn: async () => reply(200, { url: "x" }), override: "https://y" }), "https://y");
+});

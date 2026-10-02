@@ -1,6 +1,6 @@
 // Wires the page together: the start/stop control, the camera, the checks on
 // the phone, the upload loop, guidance and the capability level.
-import { Api, sleep, uploadLoop } from "./api.js";
+import { Api, findServer, sleep, uploadLoop } from "./api.js";
 import { Capability } from "./capability.js";
 import { clockMs, closeCamera, FrameGrabber, openCamera } from "./capture.js";
 import { CONFIG } from "./config.js";
@@ -11,8 +11,9 @@ import { runSetup, SetupRejected } from "./setup.js";
 import { Speaker } from "./speech.js";
 
 const $ = (id) => document.getElementById(id);
-const server = new URLSearchParams(location.search).get("server") ?? "";
-const api = new Api(server, { timeoutMs: CONFIG.request_timeout_ms });
+const serverOverride = new URLSearchParams(location.search).get("server");
+const api = new Api("", { timeoutMs: CONFIG.request_timeout_ms });
+const locateServer = async () => { api.base = await findServer({ override: serverOverride }); };
 const speaker = new Speaker();
 const settings = load("walksafe.settings", { muted: false, verbosity: "normal", rate: 1 });
 let profile = load("walksafe.profile", null);
@@ -111,6 +112,7 @@ async function start() {
 
   if (profile.consent_send_images) {
     capability.requestSent();          // waiting for the server from now on
+    await locateServer();
     connect();
   } else {
     capability.report("phone_only", true, "L2", "camera images are not being sent", 0);
@@ -136,6 +138,7 @@ async function openCameraOrSay() {
 
 async function setup() {
   $("toggle").hidden = true;
+  await locateServer();
   if (!(await openCameraOrSay())) { $("toggle").hidden = false; return; }
   try {
     profile = await runSetup({
@@ -237,6 +240,7 @@ async function connect() {
       sessionId = await api.startSession({ ...profile, verbosity: settings.verbosity, speech_rate: settings.rate });
     } catch {
       await sleep(2000);               // capability reports the silence
+      await locateServer();            // a restarted server has a new address
       continue;
     }
     await uploadLoop({

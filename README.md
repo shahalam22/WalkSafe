@@ -123,11 +123,35 @@ This loads the models, starts the server, opens a public HTTPS tunnel and logs
 
 | Path | What |
 |---|---|
+| `/` | The phone page (also published to GitHub Pages, see below) |
 | `/api/session`, `/api/session/end`, `/api/frame` | The phone API (see below) |
 | `/dashboard` | Gradio dashboard, behind a login (`walksafe` / `WALKSAFE_DASHBOARD_PASSWORD`, or a generated password that is logged) |
 | `/healthz` | Health check |
 
 On first run, DepthPro and RAFT weights are downloaded automatically from Hugging Face and the `ultralytics` model hub.
+
+### Fixed address for the phone (FR-22)
+
+The Colab URL changes every time. The phone instead always opens a fixed GitHub Pages
+address, which hosts the phone page itself plus a `server.json` holding today's server
+URL; on startup the server publishes both. The page then talks to the server across
+origins (the Pages origin is allowed by CORS). Because the page loads from Pages, it
+still opens when no server is running, and then runs in phone-only mode (L2). If the
+server restarts with a new URL, the page reads `server.json` again while it retries.
+
+One-time setup:
+
+1. Create a **public** repository for the page, e.g. `walksafe-phone`, with a README so it
+   has a `main` branch. (Pages on a private repository needs a paid plan.)
+2. In its **Settings → Pages**, deploy from branch `main`, folder `/ (root)`.
+3. Create a fine-grained token with **Contents: read and write** on that repository only.
+4. In Colab, add the secrets `WALKSAFE_PAGES_REPO` (`owner/walksafe-phone`) and
+   `WALKSAFE_PAGES_TOKEN`.
+5. On the phone, open `https://<owner>.github.io/walksafe-phone/` once and add it to the
+   home screen. GitHub takes up to a minute to update Pages after each server start.
+
+The repository holds nothing but the page and the server's address; the token never
+appears in logs.
 
 ### Phone API
 
