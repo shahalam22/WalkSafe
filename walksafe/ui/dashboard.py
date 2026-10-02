@@ -1,137 +1,144 @@
-"""
-WalkSafe Research Dashboard.
-Embedded as a tab in the main app via build_dashboard_content(demo).
-Run standalone: python -m ui.dashboard
-"""
+"""Research dashboard (FR-26): summaries, guidance delay against target, time at
+each capability level, and drill-down from any decision to the agents and
+openings behind it. Mounted at /dashboard behind a login."""
+import base64
+
 import matplotlib
 
 matplotlib.use("Agg")
-import gradio as gr
-import matplotlib.pyplot as plt
-import pandas as pd
+import gradio as gr  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
 
-from walksafe.storage import queries
+from walksafe.config import CFG, Config  # noqa: E402
+from walksafe.storage import queries  # noqa: E402
 
-_RISK_COLORS = {
-    "critical": "#e74c3c",
-    "high":     "#e67e22",
-    "moderate": "#f1c40f",
-    "low":      "#2ecc71",
-}
-_CMD_COLOR = "#4a90d9"
-_ACT_COLOR = "#7b68ee"
+RISK_COLORS = {"critical": "#e74c3c", "high": "#e67e22", "moderate": "#f1c40f", "low": "#2ecc71"}
+LEVEL_COLORS = {"L0": "#2ecc71", "L1": "#f1c40f", "L2": "#e67e22", "L3": "#e74c3c", "L4": "#7f8c8d"}
+BAR_COLOR = "#4a90d9"
+ALL = "All sessions"
 
 
-# ── Chart helpers ─────────────────────────────────────────────────────────────
-
-def _bar(df, x_col, y_col, title, color, rotate=True):
-    fig, ax = plt.subplots(figsize=(7, 3.5))
-    if df.empty:
+def _figure(title, empty, draw, size=(7, 3.5)):
+    fig, ax = plt.subplots(figsize=size)
+    if empty:
         ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
     else:
-        ax.bar(df[x_col], df[y_col], color=color)
-        if rotate:
-            plt.xticks(rotation=35, ha="right", fontsize=9)
-    ax.set_title(title, fontsize=11, fontweight="bold")
-    ax.set_ylabel("Count")
-    ax.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout()
-    return fig
-
-
-def _line(df, title):
-    fig, ax = plt.subplots(figsize=(10, 3))
-    if df.empty:
-        ax.text(0.5, 0.5, "No data — select a session", ha="center", va="center",
-                transform=ax.transAxes)
-    else:
-        ax.plot(df["frame_idx"], df["ego_speed_ms"], linewidth=1.2, color="#4a90d9")
-        ax.fill_between(df["frame_idx"], df["ego_speed_ms"], alpha=0.15, color="#4a90d9")
-        ax.set_xlabel("Frame")
-        ax.set_ylabel("Speed (m/s)")
+        draw(ax)
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
     plt.tight_layout()
+    plt.close(fig)
     return fig
 
 
-# ── Callbacks ─────────────────────────────────────────────────────────────────
-
-def _refresh():
-    df      = queries.get_sessions()
-    choices = ["All sessions"] + df["session_id"].tolist() if not df.empty else ["All sessions"]
-    return df, gr.Dropdown(choices=choices, value="All sessions")
-
-
-def _update(session_choice):
-    sid = None if (not session_choice or session_choice == "All sessions") else session_choice
-
-    summary    = queries.get_summary(sid)
-    risk_df    = queries.get_risk_distribution(sid)
-    risk_colors = [_RISK_COLORS.get(r, "#aaa") for r in risk_df["risk_level"]]
-
-    return (
-        str(summary["total_frames"]),
-        f"{summary['avg_speed_ms']:.2f} m/s",
-        str(summary["total_agents"]),
-        str(summary["critical_count"]),
-        _bar(queries.get_command_distribution(sid), "command",    "count", "Navigation Commands", _CMD_COLOR),
-        _bar(risk_df,                               "risk_level", "count", "Agent Risk Levels",   risk_colors, rotate=False),
-        _bar(queries.get_action_distribution(sid),  "action",     "count", "User Actions",        _ACT_COLOR),
-        _line(
-            queries.get_speed_over_time(sid) if sid else pd.DataFrame(),
-            "Speed Profile" + (f"  ·  session {sid[:8]}" if sid else " (select a session)"),
-        ),
-    )
+def _bars(df, x, title, colors=None):
+    def draw(ax):
+        ax.bar(df[x], df[df.columns[1]], color=colors or BAR_COLOR)
+        ax.tick_params(axis="x", labelrotation=30)
+    return _figure(title, df.empty, draw)
 
 
-# ── Layout (embeddable) ───────────────────────────────────────────────────────
+def _delays(df, target_ms):
+    def draw(ax):
+        ax.hist(df["delay_ms"], bins=30, color=BAR_COLOR)
+        ax.axvline(target_ms, color="#e74c3c", linestyle="--", label=f"target {target_ms} ms")
+        ax.set_xlabel("capture to speech (ms)")
+        ax.legend()
+    return _figure("Guidance delay", df.empty, draw)
 
-def build_dashboard_content(demo):
-    """Render dashboard components into the current Gradio context."""
-    with gr.Row():
-        refresh_btn = gr.Button("Refresh", variant="secondary", scale=0)
-        session_dd  = gr.Dropdown(
-            label="Session", choices=["All sessions"], value="All sessions", scale=2
+
+def _speed(df):
+    def draw(ax):
+        ax.plot(df["t_s"], df["user_speed_ms"], linewidth=1.2, color=BAR_COLOR)
+        ax.set_xlabel("time (s)")
+        ax.set_ylabel("walking speed (m/s)")
+    return _figure("Walking speed", df.empty, draw, size=(10, 3))
+
+
+def build_dashboard(db_path: str = CFG.storage.db_path, sessions=None, cfg: Config = CFG) -> gr.Blocks:
+    """sessions is the server's SessionStore, needed only for the live view."""
+    target = cfg.ui.delay_target_ms
+
+    def refresh():
+        df = queries.sessions(db_path)
+        return df, gr.Dropdown(choices=[ALL] + df["session_id"].tolist(), value=ALL)
+
+    def update(choice):
+        sid = None if choice in (None, ALL) else choice
+        s = queries.summary(db_path, sid, target)
+        risks = queries.counts(db_path, "agent", "risk", sid)
+        levels = queries.level_time(db_path, sid)
+        decisions = queries.decision_list(db_path, sid) if sid else pd.DataFrame()
+        labels = [f"{r.source} #{r.sequence} {r.command}" for r in decisions.itertuples()]
+        return (
+            f"{s['decisions']} server, {s['phone_stops']} phone stops",
+            f"{s['avg_speed']:.2f} m/s",
+            f"{s['agents']} tracked, {s['critical']} critical sightings",
+            "no spoken guidance yet" if s["on_time_pct"] is None else f"{s['on_time_pct']} % within {target} ms",
+            _bars(queries.counts(db_path, "decision", "command", sid), "command", "Commands"),
+            _bars(risks, "risk", "Agent risk", [RISK_COLORS.get(r, "#aaa") for r in risks["risk"]]),
+            _delays(queries.delays(db_path, sid), target),
+            _bars(levels, "level", "Time at each level (s)", [LEVEL_COLORS.get(v, "#aaa") for v in levels["level"]]),
+            _speed(queries.speed_over_time(db_path, sid) if sid else pd.DataFrame()),
+            gr.Dropdown(choices=labels, value=None),
         )
 
-    sessions_table = gr.Dataframe(
-        label="Sessions",
-        headers=["session_id", "started", "duration_min", "total_frames"],
-        interactive=False,
-    )
+    def drill(choice, label):
+        if not label or choice in (None, ALL):
+            return "", pd.DataFrame(), pd.DataFrame()
+        source, seq = label.split()[0], int(label.split()[1][1:])
+        row, agents, openings = queries.decision_detail(db_path, choice, source, seq)
+        text = "" if row is None else (
+            f"**{row['command']}** ({row['source']} #{row['sequence']}, level {row['level']}, "
+            f"confidence {row['confidence']}, spoken {bool(row['spoken'])}, delay {row['delay_ms']} ms)\n\n"
+            f"Detail: {row['detail']}\n\nReason: `{row['reason']}`")
+        return text, agents, openings
 
-    with gr.Row():
-        m_frames   = gr.Textbox(label="Total Frames",     interactive=False)
-        m_speed    = gr.Textbox(label="Avg Speed",        interactive=False)
-        m_agents   = gr.Textbox(label="Agent Encounters", interactive=False)
-        m_critical = gr.Textbox(label="Critical Events",  interactive=False)
-
-    with gr.Row():
-        cmd_plot  = gr.Plot(label="Navigation Commands")
-        risk_plot = gr.Plot(label="Agent Risk Levels")
-
-    with gr.Row():
-        act_plot = gr.Plot(label="User Actions")
-
-    spd_plot = gr.Plot(label="Speed Profile")
-
-    chart_outputs = [m_frames, m_speed, m_agents, m_critical,
-                     cmd_plot, risk_plot, act_plot, spd_plot]
-
-    refresh_btn.click(fn=_refresh, outputs=[sessions_table, session_dd])
-    session_dd.change(fn=_update,  inputs=[session_dd], outputs=chart_outputs)
-    demo.load(fn=_refresh,         outputs=[sessions_table, session_dd])
-
-
-# ── Standalone entry point ────────────────────────────────────────────────────
-
-def build_dashboard():
     with gr.Blocks(title="WalkSafe Dashboard") as demo:
-        gr.Markdown("# WalkSafe — Research Dashboard")
-        build_dashboard_content(demo)
+        gr.Markdown("# WalkSafe research dashboard")
+        with gr.Row():
+            refresh_btn = gr.Button("Refresh", variant="secondary", scale=0)
+            session_dd = gr.Dropdown(label="Session", choices=[ALL], value=ALL, scale=2)
+        table = gr.Dataframe(label="Sessions", interactive=False)
+
+        with gr.Row():
+            m_decisions = gr.Textbox(label="Decisions", interactive=False)
+            m_speed = gr.Textbox(label="Average walking speed", interactive=False)
+            m_agents = gr.Textbox(label="Agents", interactive=False)
+            m_delay = gr.Textbox(label="Guidance on time (NFR-2)", interactive=False)
+        with gr.Row():
+            cmd_plot, risk_plot = gr.Plot(label="Commands"), gr.Plot(label="Agent risk")
+        with gr.Row():
+            delay_plot, level_plot = gr.Plot(label="Guidance delay"), gr.Plot(label="Time at each level")
+        speed_plot = gr.Plot(label="Walking speed")
+
+        gr.Markdown("## Drill-down")
+        decision_dd = gr.Dropdown(label="Decision", choices=[])
+        detail = gr.Markdown()
+        with gr.Row():
+            agents_df = gr.Dataframe(label="Agents", interactive=False)
+            openings_df = gr.Dataframe(label="Openings", interactive=False)
+
+        outputs = [m_decisions, m_speed, m_agents, m_delay, cmd_plot, risk_plot,
+                   delay_plot, level_plot, speed_plot, decision_dd]
+        refresh_btn.click(refresh, outputs=[table, session_dd])
+        session_dd.change(update, inputs=[session_dd], outputs=outputs)
+        decision_dd.change(drill, inputs=[session_dd, decision_dd], outputs=[detail, agents_df, openings_df])
+        demo.load(refresh, outputs=[table, session_dd])
+
+        with gr.Tab("Live view"):
+            if cfg.ui.diagnostic_view and sessions is not None:
+                live = gr.HTML()
+                gr.Timer(1.0).tick(lambda: _live_panel(sessions), outputs=live)
+            else:
+                gr.Markdown("The live fusion panel is off. Set `ui.diagnostic_view: true` to turn it on.")
     return demo
 
 
-if __name__ == "__main__":
-    build_dashboard().launch()
+def _live_panel(sessions) -> str:
+    # Sent inline: a gr.Image would be written to Gradio's cache on disk.
+    panels = [s.panel for s in sessions.all() if s.panel]
+    if not panels:
+        return "<p>No live session.</p>"
+    return f'<img alt="Fusion panel" style="max-width:100%" src="data:image/jpeg;base64,{base64.b64encode(panels[-1]).decode()}">'

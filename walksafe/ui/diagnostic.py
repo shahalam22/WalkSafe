@@ -59,6 +59,11 @@ def render(r, cfg: Config = CFG):
     return cv2.cvtColor(np.vstack([panel, strip]), cv2.COLOR_BGR2RGB)
 
 
+def render_jpeg(r, cfg: Config = CFG) -> bytes:
+    """The panel as JPEG bytes, kept in memory for the dashboard's live view."""
+    return cv2.imencode(".jpg", cv2.cvtColor(render(r, cfg), cv2.COLOR_RGB2BGR))[1].tobytes()
+
+
 def depth_colormap(depth_arr, cfg: Config = CFG):
     lo  = np.percentile(depth_arr, cfg.ui.depth_pct_low)
     hi  = np.percentile(depth_arr, cfg.ui.depth_pct_high)

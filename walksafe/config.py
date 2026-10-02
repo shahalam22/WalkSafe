@@ -130,6 +130,16 @@ class SetupConfig:
 
 
 @dataclass(frozen=True)
+class StorageConfig:
+    db_path:         str   = "walksafe.db"
+    queue_size:      int   = 10_000     # beyond this, log items are dropped and counted (FR-25)
+    batch_size:      int   = 200
+    flush_every_s:   float = 1.0
+    busy_timeout_s:  float = 5.0
+    close_timeout_s: float = 5.0
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     port:            int   = 7860
     # The phone page is served from GitHub Pages (FR-22) as well as from the server itself.
@@ -195,6 +205,10 @@ class UiConfig:
     depth_pct_high:     float = 95
     flow_arrow_step:    int   = 30
     advisory_height_px: int   = 170
+    # Live fusion panel on the dashboard. Off by default: it costs server time and
+    # holds the latest camera frame in memory (never on disk).
+    diagnostic_view:    bool  = False
+    delay_target_ms:    int   = 1200     # NFR-2, drawn on the dashboard
 
 
 @dataclass(frozen=True)
@@ -207,6 +221,7 @@ class Config:
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     quality:  QualityConfig  = field(default_factory=QualityConfig)
     setup:    SetupConfig    = field(default_factory=SetupConfig)
+    storage:  StorageConfig  = field(default_factory=StorageConfig)
     server:   ServerConfig   = field(default_factory=ServerConfig)
     phone:    PhoneConfig    = field(default_factory=PhoneConfig)
     ui:       UiConfig       = field(default_factory=UiConfig)

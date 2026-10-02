@@ -1,171 +1,155 @@
+"""Writes sessions, decisions and events in the background (FR-24, FR-25).
+
+Callers only put items on a bounded queue, which never blocks: when it is
+full, the item is dropped and counted. One thread writes them in batches.
+"""
+import atexit
 import logging
 import queue
 import sqlite3
 import threading
 import time
-import uuid
 
+from walksafe.config import CFG, StorageConfig
 from walksafe.interpretation.openings import best_opening
 
-from .schema import DB_PATH, create_tables
+from .schema import migrate
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE    = 50
-FLUSH_EVERY_S = 5.0
-
-_queue      = queue.Queue()
-_session_id = None
-_thread     = None
+_STOP = object()
 
 
-def init():
-    global _session_id, _thread
-    create_tables()
-    _session_id = str(uuid.uuid4())
-    _thread = threading.Thread(target=_worker, daemon=True)
-    _thread.start()
-    log.info("DB ready, session=%s path=%s", _session_id[:8], DB_PATH)
+class LogWriter:
+    def __init__(self, db_path: str, cfg: StorageConfig = CFG.storage, clock=time.time):
+        migrate(db_path)
+        self.db_path  = db_path
+        self.cfg      = cfg
+        self.clock    = clock
+        self.dropped  = 0
+        self._queue   = queue.Queue(maxsize=cfg.queue_size)
+        self._open    = set()
+        self._lock    = threading.Lock()
+        self._thread  = threading.Thread(target=self._run, name="log-writer", daemon=True)
+        self._thread.start()
+        atexit.register(self.close)
 
+    # Called from request threads
 
-def enqueue(frame_idx, r):
-    """Non-blocking; r is a pipeline.FrameResult."""
-    best = best_opening(r.openings)
-    _queue.put_nowait({
-        "frame_idx": frame_idx,
-        "ts":        time.time(),
-        "command":   r.decision.command,
-        "detail":    r.decision.detail,
-        "reasoning": r.decision.reason,
-        "ego":       {"action": r.ego.action, "ego_speed_ms": r.ego.speed_ms,
-                      "speed_trend_ms": r.ego.speed_trend_ms},
-        "best":      _gap_row(best) if best else None,
-        "gaps":      [_gap_row(o) for o in r.openings or []],
-        "agents":    [{
-            "tid": a.tid, "name": a.kind, "dist_m": a.dist_m, "dist_m_sigma": a.dist_sigma,
-            "approach_speed_ms": a.approach_speed_ms, "ttc_s": a.ttc_s, "risk_level": a.risk,
-            "motion": a.motion, "track_age": a.track_points,
-            "cx": (a.box[0] + a.box[2]) // 2, "cy": (a.box[1] + a.box[3]) // 2,
-        } for a in r.agents],
-    })
+    def start_session(self, session_id: str, profile: dict) -> None:
+        with self._lock:
+            self._open.add(session_id)
+        self._put("user", {**profile, "created_at": self.clock()})
+        self._put("session", (session_id, profile.get("user_id"), self.clock()))
 
+    def end_session(self, session_id: str, reason: str) -> None:
+        with self._lock:
+            if session_id not in self._open:
+                return
+            self._open.discard(session_id)
+        self._put("end", (self.clock(), reason, session_id, session_id))
 
-def _gap_row(o):
-    return {"direction": o.direction, "width_m": o.width_m, "dist_m": o.dist_m,
-            "cx_px": (o.x1_px + o.x2_px) // 2, "width_px": o.x2_px - o.x1_px}
-
-
-def new_session():
-    """Call on reset — closes current session and starts a fresh one."""
-    _queue.put_nowait({"_new_session": True, "ts": time.time()})
-
-
-def _worker():
-    global _session_id
-    con = sqlite3.connect(DB_PATH)
-    con.execute("PRAGMA journal_mode = WAL")
-    con.execute("PRAGMA synchronous  = NORMAL")
-    con.execute("INSERT INTO sessions(session_id, started_at) VALUES (?, ?)",
-                (_session_id, time.time()))
-    con.commit()
-
-    batch, last_flush = [], time.time()
-
-    while True:
-        try:
-            item = _queue.get(timeout=1.0)
-
-            if item.get("_new_session"):
-                _flush(con, batch, _session_id)
-                batch = []
-                _close_session(con, _session_id, item["ts"])
-                _session_id = str(uuid.uuid4())
-                con.execute("INSERT INTO sessions(session_id, started_at) VALUES (?, ?)",
-                            (_session_id, item["ts"]))
-                con.commit()
-                last_flush = time.time()
-                continue
-
-            batch.append(item)
-            now = time.time()
-            if len(batch) >= BATCH_SIZE or (now - last_flush) >= FLUSH_EVERY_S:
-                _flush(con, batch, _session_id)
-                batch, last_flush = [], now
-
-        except queue.Empty:
-            if batch:
-                _flush(con, batch, _session_id)
-                batch, last_flush = [], time.time()
-        except Exception:
-            log.exception("DB write error")
-
-
-def _close_session(con, session_id, ended_at):
-    con.execute(
-        "UPDATE sessions SET ended_at=?, total_frames="
-        "(SELECT COUNT(*) FROM frames WHERE session_id=?) WHERE session_id=?",
-        (ended_at, session_id, session_id),
-    )
-    con.commit()
-
-
-def _flush(con, batch, session_id):
-    if not batch:
-        return
-
-    frame_rows, agent_rows, gap_rows = [], [], []
-
-    for item in batch:
-        ego    = item["ego"]    or {}
-        gaps   = item["gaps"]   or []
-        agents = item["agents"] or []
-        ts, fi = item["ts"], item["frame_idx"]
-
-        best   = item["best"]
-        n_crit = sum(1 for a in agents if a.get("risk_level") == "critical")
-
-        frame_rows.append((
-            session_id, fi, ts,
-            item["command"], item["detail"], item["reasoning"],
-            ego.get("action"),             ego.get("action_confidence"),
-            ego.get("ego_speed_ms"),       ego.get("speed_trend_ms"),
-            ego.get("lateral_drift"),
-            ego.get("flow_lateral_ratio"), ego.get("flow_rotation_score"),
-            len(agents), n_crit, len(gaps),
-            best["width_m"]   if best else None,
-            best["dist_m"]    if best else None,
-            best["direction"] if best else None,
+    def decision(self, session_id: str, seq: int, r) -> None:
+        """r is a pipeline.FrameResult."""
+        d, best = r.decision, best_opening(r.openings)
+        self._put("decision", (
+            (session_id, "server", seq, r.capture_ts, d.command, d.detail, d.reason,
+             d.confidence, r.level, r.ego.speed_ms),
+            [(session_id, seq, a.tid, a.kind, a.dist_m, a.approach_speed_ms, a.ttc_s, a.risk, a.motion)
+             for a in r.agents],
+            [(session_id, seq, o.direction, o.width_m, o.dist_m, o is best) for o in r.openings or []],
         ))
 
-        for a in agents:
-            agent_rows.append((
-                session_id, fi, ts,
-                a.get("tid"),  a.get("name"),  a.get("conf"),
-                a.get("dist_m"), a.get("dist_m_sigma"),
-                a.get("approach_speed_ms"), a.get("ttc_s"),
-                a.get("risk_level"), a.get("motion"),
-                a.get("track_age"), a.get("cx"), a.get("cy"),
-            ))
+    def events(self, session_id: str, events: list) -> None:
+        """Events from the phone (server.EventIn); times are in phone milliseconds."""
+        for e in events:
+            at = None if e.occurred_at is None else e.occurred_at / 1000
+            if e.type == "delivery":
+                spoken_at = None if e.spoken_at is None else e.spoken_at / 1000
+                self._put("delivery", (e.outcome == "spoken", spoken_at, spoken_at, session_id, e.seq))
+            elif e.type == "phone_stop":
+                self._put("decision", ((session_id, "phone", e.seq, at, "stop", "something close ahead",
+                                        f"phone expansion check ttc={e.ttc_s}s", None, None, None), [], []))
+                self._put("delivery_phone", (at, session_id, e.seq))
+            else:
+                self._put("event", (session_id, at, e.type, e.cause, e.from_level, e.to_level))
 
-        for g in gaps:
-            gap_rows.append((
-                session_id, fi, ts,
-                g.get("direction"), g.get("width_m"), g.get("dist_m"),
-                g.get("cx_px"), g.get("width_px"),
-            ))
+    def server_event(self, session_id: str, kind: str, cause: str) -> None:
+        self._put("event", (session_id, self.clock(), kind, cause, None, None))
 
-    con.executemany(
-        "INSERT OR IGNORE INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        frame_rows,
-    )
-    if agent_rows:
-        con.executemany(
-            "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            agent_rows,
-        )
-    if gap_rows:
-        con.executemany(
-            "INSERT INTO gaps VALUES (?,?,?,?,?,?,?,?)",
-            gap_rows,
-        )
-    con.commit()
+    def close(self) -> None:
+        """End every open session and write everything still queued."""
+        with self._lock:
+            still_open, self._open = list(self._open), set()
+        for session_id in still_open:
+            self._put("end", (self.clock(), "shutdown", session_id, session_id))
+        if self._thread.is_alive():
+            self._queue.put(_STOP)
+            self._thread.join(timeout=self.cfg.close_timeout_s)
+
+    def _put(self, kind: str, item) -> None:
+        try:
+            self._queue.put_nowait((kind, item))
+        except queue.Full:
+            with self._lock:
+                self.dropped += 1
+                if self.dropped % 100 == 1:
+                    log.warning("Log queue full; %d items dropped so far", self.dropped)
+
+    # The writer thread
+
+    def _run(self) -> None:
+        con = sqlite3.connect(self.db_path, timeout=self.cfg.busy_timeout_s)
+        con.execute("PRAGMA synchronous = NORMAL")
+        stop = False
+        while not stop:
+            batch = []
+            try:
+                batch.append(self._queue.get(timeout=self.cfg.flush_every_s))
+                while len(batch) < self.cfg.batch_size:
+                    batch.append(self._queue.get_nowait())
+            except queue.Empty:
+                pass
+            stop = any(item is _STOP for item in batch)
+            try:
+                for kind, item in (b for b in batch if b is not _STOP):
+                    _write(con, kind, item)
+                con.commit()
+            except sqlite3.Error:
+                log.exception("Could not write %d log items", len(batch))
+                con.rollback()
+        con.close()
+
+
+def _write(con: sqlite3.Connection, kind: str, item) -> None:
+    if kind == "user":
+        cols    = [c for c in USER_COLUMNS if c in item]
+        updates = ", ".join(f"{c} = excluded.{c}" for c in cols if c not in ("user_id", "created_at"))
+        con.execute(f"INSERT INTO user ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))}) "
+                    f"ON CONFLICT (user_id) DO " + (f"UPDATE SET {updates}" if updates else "NOTHING"),
+                    [item[c] for c in cols])
+    elif kind == "session":
+        con.execute("INSERT OR IGNORE INTO session (session_id, user_id, started_at) VALUES (?, ?, ?)", item)
+    elif kind == "end":
+        con.execute("UPDATE session SET ended_at = ?, end_reason = ?, total_decisions = "
+                    "(SELECT COUNT(*) FROM decision WHERE session_id = ?) WHERE session_id = ?", item)
+    elif kind == "decision":
+        row, agents, openings = item
+        con.execute("INSERT OR IGNORE INTO decision (session_id, source, sequence, captured_at, command, detail, "
+                    "reason, confidence, level, user_speed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        con.executemany("INSERT INTO agent VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", agents)
+        con.executemany("INSERT INTO opening VALUES (?, ?, ?, ?, ?, ?)", openings)
+    elif kind == "delivery":
+        con.execute("UPDATE decision SET spoken = ?, spoken_at = ?, "
+                    "delay_ms = CAST(ROUND((? - captured_at) * 1000) AS INTEGER) "
+                    "WHERE session_id = ? AND source = 'server' AND sequence = ?", item)
+    elif kind == "delivery_phone":
+        con.execute("UPDATE decision SET spoken = 1, spoken_at = ? "
+                    "WHERE session_id = ? AND source = 'phone' AND sequence = ?", item)
+    elif kind == "event":
+        con.execute("INSERT INTO event VALUES (?, ?, ?, ?, ?, ?)", item)
+
+
+USER_COLUMNS = ("user_id", "phone_model", "verbosity", "speech_rate", "consent_send_images", "camera_fov_deg",
+                "mount_height_m", "mount_pitch_deg", "shoulder_width_m", "clearance_margin_m", "depth_scale",
+                "depth_check_passed", "direction_test_passed", "created_at")

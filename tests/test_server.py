@@ -220,3 +220,55 @@ def test_depth_check_only_in_a_setup_session(client):
 
 def test_server_json_points_at_the_same_origin(client):
     assert client.get("/server.json").json() == {"url": ""}
+
+
+def test_t13_a_walk_is_logged_end_to_end_and_setup_is_not(tmp_path, clock):
+    import sqlite3
+
+    from walksafe.storage import LogWriter
+    db = str(tmp_path / "w.db")
+    writer = LogWriter(db)
+    client = TestClient(create_app(fake_models(), writer, clock=clock))
+    sid = start(client, user_id="u9")
+    send(client, sid, 1)
+    send(client, sid, 2)
+    client.post("/api/event", json={"session_id": sid, "events": [
+        {"type": "delivery", "seq": 1, "outcome": "spoken", "spoken_at": 1_759_400_000_900.0}]})
+    client.post("/api/session/end", json={"session_id": sid, "reason": "user"})
+    setup = client.post("/api/session", json={"purpose": "setup", "profile": {"consent_send_images": True}})
+    send(client, setup.json()["session_id"], 1)
+    writer.close()
+
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT user_id, end_reason, total_decisions FROM session").fetchall() == [("u9", "user", 2)]
+    assert con.execute("SELECT sequence, spoken, delay_ms FROM decision ORDER BY sequence").fetchall() == \
+           [(1, 1, 400), (2, None, None)]
+    assert [p.suffix for p in tmp_path.iterdir() if p.suffix not in (".db", ".db-wal", ".db-shm")] == []
+
+
+def test_a_fault_is_logged_as_an_event(tmp_path, clock):
+    import sqlite3
+
+    from walksafe.storage import LogWriter
+    db, detector = str(tmp_path / "w.db"), BrokenDetector()
+    writer = LogWriter(db)
+    client = TestClient(create_app(fake_models(detector=detector), writer, clock=clock))
+    sid = start(client)
+    detector.broken = True
+    send(client, sid, 1)
+    writer.close()
+    assert sqlite3.connect(db).execute("SELECT type, cause FROM event").fetchall() == \
+           [("fault", "pipeline: RuntimeError")]
+
+
+def test_live_panel_is_kept_in_memory_only_when_switched_on(clock):
+    from dataclasses import replace
+
+    from walksafe.config import CFG
+    on = replace(CFG, ui=replace(CFG.ui, diagnostic_view=True))
+    for cfg, expect in ((CFG, False), (on, True)):
+        client = TestClient(create_app(fake_models(), cfg=cfg, clock=clock))
+        sid = start(client)
+        send(client, sid, 1)
+        panel = client.app.state.sessions.get(sid).panel
+        assert (panel is not None and panel[:2] == b"\xff\xd8") == expect

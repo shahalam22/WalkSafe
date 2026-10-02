@@ -16,10 +16,12 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from walksafe import pages, pipeline, storage
+from walksafe import pages, pipeline
 from walksafe.config import CFG, Config, Profile, SetupConfig, phone_js
 from walksafe.perception import Models
 from walksafe.session import Session, SessionStore
+from walksafe.storage import LogWriter
+from walksafe.ui import diagnostic
 
 log = logging.getLogger(__name__)
 
@@ -69,17 +71,19 @@ class EventBatch(BaseModel):
     events:     list[EventIn] = Field(max_length=CFG.phone.max_queued_events)
 
 
-def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
+def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CFG, clock=time.time) -> FastAPI:
+    """writer is None only in tests that do not look at the log."""
     app      = FastAPI(title="WalkSafe", docs_url=None, redoc_url=None, openapi_url=None)
     sessions = SessionStore(cfg.server.session_idle_s)
     gpu      = threading.Lock()          # the models are shared, so one frame at a time
     app.state.sessions = sessions
+    app.state.writer   = writer
     app.add_middleware(CORSMiddleware, allow_origins=list(cfg.server.allowed_origins),
                        allow_methods=["GET", "POST"], allow_headers=["*"])
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True, "sessions": len(sessions)}
+        return {"ok": True, "sessions": len(sessions), "log_dropped": writer.dropped if writer else 0}
 
     @app.post("/api/session")
     def start_session(req: SessionStart):
@@ -92,6 +96,8 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
         profile = Profile(p.camera_fov_deg, p.shoulder_width_m, p.clearance_margin_m, p.depth_scale)
         s = sessions.add(Session(models.detector.new_tracker(), profile,
                                  purpose=req.purpose, last_seen=clock()))
+        if writer and req.purpose == "walk":
+            writer.start_session(s.session_id, p.model_dump())
         log.info("Session %s started (%s)", s.session_id[:8], req.purpose)
         return {"session_id": s.session_id}
 
@@ -99,6 +105,8 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
     def end_session(req: SessionEnd):
         if sessions.remove(req.session_id) is None:
             raise HTTPException(404, "unknown_session")
+        if writer:
+            writer.end_session(req.session_id, req.reason)
         log.info("Session %s ended (%s)", req.session_id[:8], req.reason)
         return {"ok": True}
 
@@ -109,6 +117,8 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
         for e in req.events:
             if e.type == "level_change":
                 log.info("Session %s: %s -> %s (%s)", req.session_id[:8], e.from_level, e.to_level, e.cause)
+        if writer:
+            writer.events(req.session_id, req.events)
         return {"ok": True, "accepted": len(req.events)}
 
     async def read_form(request: Request, **fields):
@@ -158,6 +168,8 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
         now = clock()
         for old in sessions.expire(now):
             log.info("Session %s expired", old.session_id[:8])
+            if writer:
+                writer.end_session(old.session_id, "idle")
         s = sessions.get(session_id)
         if s is None:
             raise HTTPException(404, "unknown_session")
@@ -174,13 +186,18 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
                 r = pipeline.process(models, s, image, capture_ts / 1000.0, cfg)
         except HTTPException:
             raise
-        except Exception:
+        except Exception as e:
             log.exception("Pipeline fault in session %s at seq %d", session_id[:8], seq)
+            if writer:
+                writer.server_event(session_id, "fault", f"pipeline: {type(e).__name__}"[:64])
             return JSONResponse({"error": "pipeline_fault", "seq": seq}, status_code=500)
         finally:
             s.lock.release()
 
-        storage.enqueue(s.frame_idx, r)
+        if writer and s.purpose == "walk":
+            writer.decision(session_id, seq, r)
+        if cfg.ui.diagnostic_view:
+            s.panel = diagnostic.render_jpeg(r, cfg)
         d = r.decision
         return {
             "seq": seq, "capture_ts": capture_ts,

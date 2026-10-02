@@ -242,13 +242,20 @@ phone-only mode at L2.
 
 ### Dashboard
 
-Open `/dashboard`, log in, press **Refresh**, then select a session to view:
+Open `/dashboard`, log in, press **Refresh**, then select a session:
 
-- Total frames, average speed, agent encounters, critical events
-- Navigation command distribution
-- Agent risk level distribution
-- Ego action histogram
-- Speed profile over time
+- Decisions (server and phone stops), average walking speed, agents seen, and the share of
+  spoken guidance that arrived within the 1.2 s target (NFR-2)
+- Command distribution and agent risk levels
+- Guidance delay histogram (capture to speech) against the target
+- Time spent at each capability level
+- Walking speed over the session
+- **Drill-down**: pick any decision to see its rule and values, and the agents and openings
+  it was made from
+
+A **Live view** tab shows the fusion panel for the newest session when
+`ui.diagnostic_view` is turned on (off by default). The panel is held in memory and sent
+inline; it is never written to disk.
 
 ---
 
@@ -276,14 +283,15 @@ agents:
 
 ## Database Schema
 
-Sessions are stored in `walksafe.db` (created automatically).
+`walksafe.db` follows SRS §4: `user`, `session`, `decision`, `agent`, `opening`, `event`,
+plus `schema_version`. There are no image columns. A database from the prototype is
+migrated on first start.
 
-**`sessions`** — one row per run  
-**`frames`** — per-frame decision, ego state, and summary counts  
-**`agents`** — every tracked detection (position, distance, TTC, risk, motion)  
-**`gaps`** — every detected navigable gap (direction, width, distance)
-
-The async batch writer flushes every 50 frames or 5 seconds, so the vision pipeline is never blocked by I/O.
+The server writes through a bounded queue on a background thread, so logging never
+delays guidance (FR-25); if the queue is full, items are dropped and counted (shown in
+`/healthz`). The phone reports which results it spoke and when, so each decision also
+records `spoken`, `spoken_at` and `delay_ms`. Sessions are closed when the user stops,
+when they go idle, and when the server shuts down.
 
 ---
 

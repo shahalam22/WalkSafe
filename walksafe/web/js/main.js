@@ -28,6 +28,7 @@ let guidance = null;
 let capability = null;
 let expansion = null;
 let events = [];
+let phoneStops = 0;
 let timers = [];
 
 function load(key, defaults) {
@@ -222,7 +223,7 @@ function checkLoop() {
       const closing = expansion.update(g.data, g.width, g.height, g.ts);
       capability.checkRan(closing);
       if (closing.stop && !guidance.phoneStopActive) {
-        queueEvent({ type: "phone_stop", occurred_at: clockMs(), ttc_s: closing.ttc });
+        queueEvent({ type: "phone_stop", seq: ++phoneStops, occurred_at: clockMs(), ttc_s: closing.ttc });
       }
       if (closing.stop) guidance.phoneStop();
       else guidance.phoneClear();

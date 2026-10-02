@@ -30,6 +30,7 @@ class Session:
     purpose:       str               = "walk"
     last_seq:      int               = -1
     last_seen:     float             = 0.0
+    panel:         bytes | None      = None     # latest diagnostic JPEG, in memory only
 
 
 class SessionStore:
@@ -59,6 +60,10 @@ class SessionStore:
             for s in idle:
                 del self._sessions[s.session_id]
         return idle
+
+    def all(self) -> list[Session]:
+        with self._lock:
+            return list(self._sessions.values())
 
     def __len__(self) -> int:
         return len(self._sessions)
