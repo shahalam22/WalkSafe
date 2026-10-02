@@ -109,6 +109,7 @@ This report presents the requirements, the scenario, data and design models, the
 8. [Preliminary Test Plan](#8-preliminary-test-plan)
 9. [Timeline](#9-timeline)
 10. [Appendix — Key Risks and Mitigations](#appendix--key-risks-and-mitigations)
+11. [Appendix B — Platform Limitations](#appendix-b--platform-limitations)
 
 **Figures**
 
@@ -187,9 +188,9 @@ A smartphone camera can capture the information needed to fill this gap, and cur
 | # | Deliverable | Contents | Status |
 |---|---|---|---|
 | D1 | **Working prototype** | Depth, object detection, and motion models running together on a Colab GPU; rule-based decision engine; browser interface | Complete |
-| D2 | **Logging and dashboard** | SQLite record of every decision and the values behind it; dashboard showing command, risk, and speed summaries | In Progress |
-| D3 | **Smartphone application** | The app the user runs. Captures video, checks for close obstacles on the phone itself, gets guidance from the server, and speaks it. Includes first-time setup and works with a screen reader | In Progress |
-| D4 | **Test suite and test clips** | Automated tests for the safety requirements, plus recorded clips with known distances and directions to test against | Planned |
+| D2 | **Logging and dashboard** | SQLite record of every decision and the values behind it; dashboard showing command, risk, and speed summaries | Complete |
+| D3 | **Smartphone application** | The app the user runs. Captures video, checks for close obstacles on the phone itself, gets guidance from the server, and speaks it. Includes first-time setup and works with a screen reader | Complete as a web page in the phone's browser (see Appendix B); field checks pending |
+| D4 | **Test suite and test clips** | Automated tests for the safety requirements, plus recorded clips with known distances and directions to test against | Automated tests complete; GPU runs, clips and phone measurements pending |
 | D5 | **Final report and demonstration** | Final report and a working demonstration | Planned |
 
 **Device scope.** The smartphone is the only device, and its camera is the only sensor. Commands are heard through the phone speaker or earphones plugged into it. The heavy models run on a Colab GPU, which is remote compute rather than something the user carries. Earphones are supported but not required, since a blind traveller needs to hear their surroundings (NFR-12).
@@ -726,6 +727,7 @@ The schemas derived from the ER diagram are as follows.
 | | camera_fov_deg | FLOAT |
 | | mount_height_m | FLOAT |
 | | mount_pitch_deg | FLOAT |
+| | shoulder_width_m | FLOAT |
 | | clearance_margin_m | FLOAT |
 | | depth_scale | FLOAT |
 | | depth_check_passed | BOOLEAN |
@@ -738,11 +740,11 @@ The schemas derived from the ER diagram are as follows.
 | | end_reason | VARCHAR(32) |
 | | total_decisions | INTEGER |
 | **decision** | session_id | VARCHAR(64) PK, FK |
+| | source | VARCHAR(8) PK |
 | | sequence | INTEGER PK |
 | | captured_at | TIMESTAMP |
 | | spoken_at | TIMESTAMP |
 | | delay_ms | INTEGER |
-| | source | VARCHAR(8) |
 | | command | VARCHAR(24) |
 | | detail | TEXT |
 | | reason | TEXT |
@@ -773,6 +775,10 @@ The schemas derived from the ER diagram are as follows.
 | | to_level | VARCHAR(4) |
 
 *Table 1: Schema table*
+
+*Implementation note (October 2026): `user.shoulder_width_m` was added because FR-8 compares
+openings against it, and `source` joined the `decision` key because a stop from the phone and
+a server decision can share a frame number. `schema_version` records the schema's version.*
 
 
 ---
@@ -1117,6 +1123,28 @@ The user trials described in §8.3 need ethics approval and an orientation-and-m
 | R11 | Session ends mid-walk when the free Colab session expires | Colab time limits reached with no warning | Capability drops to phone-only rather than stopping; automatic reconnection; user told either way | FR-22, NFR-10 |
 
 **Residual risk.** R3, and the glass and thin-obstacle part of R1, are not removed by design. They are limited only by the user also carrying a cane, and by saying so plainly. This is why WalkSafe is described throughout as something used alongside a cane, not instead of one.
+
+---
+
+# Appendix B — Platform Limitations
+
+*Added October 2026.* The phone side of WalkSafe was built as a web page in the phone's
+browser (Chrome on Android first, Safari on iOS second) rather than a native application,
+with the server on Google Colab. Browsers and free Colab cannot provide some of what this
+document asks for. These are recorded here as limitations rather than worked around; the
+requirements themselves are unchanged. The mapping of every requirement to code and tests is
+in `docs/traceability.md`.
+
+| Limitation | Affects | What WalkSafe does instead |
+|---|---|---|
+| Browsers suspend the camera and timers when the screen is off or the page is hidden | §1.4 (operation with the screen off), NFR-14 | Holds a Screen Wake Lock so the screen stays on while guidance runs, and takes it again when the page returns |
+| Browsers do not report device temperature | FR-20 (overheating), L4 | Battery warnings only; overheating cannot be detected |
+| `navigator.vibrate` does not exist in Safari on iOS | FR-12 (vibration), R5 | Earcon and speech still play; vibration works on Android |
+| The Battery Status API exists only in Chromium browsers | FR-20 (battery) | Warnings at 20 % and 10 %, and shutdown at 5 %, on Chrome for Android only |
+| Free Colab sessions can end or get no GPU, so two continuous hours cannot be guaranteed | NFR-9, R11 | The phone drops to L2, announces it, keeps retrying, and finds a restarted server through the fixed address |
+| A page that has never loaded cannot run offline | phone-only mode (§3.1.3) | The page is served from GitHub Pages, so it loads whenever there is a network, even with no server running; it then works in phone-only mode |
+| The server lookup service of §6.1 needs an always-on host | FR-22 | GitHub Pages serves the page and a `server.json` with the current server address, which the server publishes when it starts |
+| iOS asks permission before giving device orientation | FR-23 (mounting position) | The phone's tilt is checked where the browser allows it; otherwise it is not measured |
 
 ---
 
