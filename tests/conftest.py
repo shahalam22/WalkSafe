@@ -17,7 +17,10 @@ class FakeDetector:
     def __init__(self, boxes: list[Box] | None = None):
         self.boxes = boxes or []
 
-    def track(self, frame_bgr):
+    def new_tracker(self):
+        return object()
+
+    def track(self, frame_bgr, tracker):
         return list(self.boxes)
 
 

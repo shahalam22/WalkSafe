@@ -1,4 +1,7 @@
 """Gradio webcam front end from the prototype; replaced by the phone page in walksafe/web."""
+import logging
+import time
+
 import cv2
 import gradio as gr
 import numpy as np
@@ -10,6 +13,8 @@ from walksafe.session import Session
 from walksafe.ui import diagnostic
 from walksafe.ui.dashboard import build_dashboard_content
 
+log = logging.getLogger(__name__)
+
 # Gradio 5+ replaced `mirror_webcam` with `webcam_options`. Mirroring must stay
 # off either way — a flipped frame would swap step_left / step_right.
 if hasattr(gr, "WebcamOptions"):
@@ -18,26 +23,34 @@ else:
     _NO_MIRROR = {"mirror_webcam": False}
 
 
-def build_ui(models: Models):
-    state = {"session": Session()}
+FAULT_PHRASE = "Guidance stopped. System error."
 
-    def process_frame(pil_image):
+
+def build_ui(models: Models):
+
+    def process_frame(pil_image, session):
         if pil_image is None:
             blank = np.zeros((400, 300, 3), dtype=np.uint8)
             cv2.putText(blank, "Waiting for camera...", (20, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
-            return Image.fromarray(blank), ""
+            return Image.fromarray(blank), "", session
 
-        s         = state["session"]
-        frame_bgr = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-        r         = pipeline.process(models, s, frame_bgr)
-        storage.enqueue(s.frame_idx, r.command, r.detail, r.reasoning, r.ego, r.gaps, r.dets)
-        return Image.fromarray(diagnostic.render(r, s.track_history)), r.phrase
+        # The webcam stream carries no capture time, so arrival time stands in
+        # until the phone page sends its own (Phase 2).
+        capture_ts = time.time()
+        try:
+            session = session or Session(models.detector.new_tracker())
+            frame   = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+            r       = pipeline.process(models, session, frame, capture_ts)
+            storage.enqueue(session.frame_idx, r)
+            return Image.fromarray(diagnostic.render(r)), r.phrase, session
+        except Exception:
+            log.exception("Frame pipeline failed")
+            return None, FAULT_PHRASE, session
 
     def on_reset():
         storage.new_session()
-        state["session"] = Session()
-        return None, "State reset. Ready."
+        return None, "State reset. Ready.", None
 
     with gr.Blocks(title="WalkSafe", theme=gr.themes.Default()) as demo:
         with gr.Tabs():
@@ -52,7 +65,7 @@ def build_ui(models: Models):
                 4. The advisory strip gives text guidance
                 5. Audio instructions will play through your speaker
 
-                > Depth updates every 5 frames. Expect ~1-2 fps on Colab free tier.
+                > Depth is never more than 0.4 s old. Expect ~1-2 fps on Colab free tier.
                 """)
 
                 with gr.Row():
@@ -75,8 +88,10 @@ def build_ui(models: Models):
 
                 tts_box = gr.Textbox(visible=False, elem_id="tts_box")
 
-                cam_input.stream(fn=process_frame, inputs=[cam_input], outputs=[output_img, tts_box])
-                reset_btn.click(fn=on_reset, inputs=[], outputs=[output_img, status])
+                session = gr.State(None)
+                cam_input.stream(fn=process_frame, inputs=[cam_input, session],
+                                 outputs=[output_img, tts_box, session])
+                reset_btn.click(fn=on_reset, inputs=[], outputs=[output_img, status, session])
                 tts_box.change(
                     fn=None, inputs=[tts_box], outputs=[],
                     js="(t) => { if (!t) return; window.speechSynthesis.cancel(); "

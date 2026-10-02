@@ -1,110 +1,91 @@
+"""The user's own motion, from optical flow and the depth map.
+
+A static point at depth Z, seen at (x, y) from the image centre in the first
+frame, lands at (x', y') = (x + u, y + v) in the second. If the camera moves
+by T = (Tx, Ty, Tz) and turns by w = (wx, wy, wz), then
+
+    u = (x' Tz - f Tx) / Z + (x y / f) wx - (f + x^2 / f) wy + y wz
+    v = (y' Tz - f Ty) / Z + (f + y^2 / f) wx - (x y / f) wy - x wz
+
+The translation part is exact for any step size, which matters at 1-2 fps;
+the rotation part is the usual small-angle form. Both are linear in the six
+unknowns, so a least-squares fit over a grid of points gives them directly,
+and because the depth is metric, so is T. Signs: x to the right, y down,
+z forward; wy > 0 is a turn to the right. Left and right therefore come from
+the direction of the flow, never from where it is concentrated (NFR-6).
+"""
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
-from walksafe.config import CFG, CameraConfig, EgoConfig
+from walksafe.config import CFG, EgoConfig
 
 
-def standing_still():
-    return {
-        "action":              "standing_still",
-        "action_confidence":   0.95,
-        "ego_speed_ms":        0.0,
-        "lateral_drift":       "straight",
-        "speed_trend_ms":      0.0,
-        "ego_flow_magnitude":  0.0,
-        "flow_centroid_x":     0.5,
-        "flow_lateral_ratio":  0.0,
-        "flow_rotation_score": 0.0,
-    }
+@dataclass(frozen=True)
+class Ego:
+    action:         str
+    speed_ms:       float     # forward
+    lateral_ms:     float     # positive = moving to the right
+    yaw_rate_dps:   float     # positive = turning to the right
+    speed_trend_ms: float
 
 
-def extract_signals(flow, cfg: EgoConfig = CFG.ego):
-    H, W   = flow.shape[:2]
-    fx, fy = flow[..., 0], flow[..., 1]
-    mag    = np.sqrt(fx**2 + fy**2).astype(np.float32)
-
-    bg_rows            = max(1, int(H * cfg.background_frac))
-    ego_flow_magnitude = float(mag[:bg_rows, :].mean())
-
-    total_mag       = float(mag.sum()) + 1e-8
-    xs              = np.tile(np.arange(W), (H, 1)).astype(np.float32)
-    flow_centroid_x = float((mag * xs).sum() / total_mag) / W
-
-    fx_e = float((fx**2).sum())
-    fy_e = float((fy**2).sum())
-    flow_lateral_ratio = fx_e / (fx_e + fy_e + 1e-8)
-
-    left_fx  = float(fx[:, :W//2].mean())
-    right_fx = float(fx[:, W//2:].mean())
-    same_dir = (np.sign(left_fx) == np.sign(right_fx)) and \
-               (abs(left_fx) > 0.5) and (abs(right_fx) > 0.5)
-    rot_mag  = abs(left_fx - right_fx)
-    max_pos  = max(abs(left_fx) + abs(right_fx), 1e-8)
-    flow_rotation_score = float(1.0 - rot_mag / max_pos) if same_dir else 0.0
-
-    return {
-        "ego_flow_magnitude":  round(ego_flow_magnitude, 3),
-        "flow_centroid_x":     round(flow_centroid_x, 3),
-        "flow_lateral_ratio":  round(flow_lateral_ratio, 3),
-        "flow_rotation_score": round(flow_rotation_score, 3),
-    }
+STILL = Ego("standing_still", 0.0, 0.0, 0.0, 0.0)
 
 
-def derive_ego(flow_signals, depth_arr, speed_history,
-               cfg: EgoConfig = CFG.ego, camera: CameraConfig = CFG.camera):
-    W       = depth_arr.shape[1]
-    ego_mag = flow_signals["ego_flow_magnitude"]
-    cx_norm = flow_signals["flow_centroid_x"]
-    lat_rat = flow_signals["flow_lateral_ratio"]
-    rot_sc  = flow_signals["flow_rotation_score"]
-
-    fov_rad   = math.radians(camera.fov_deg)
-    focal_px  = W / (2 * math.tan(fov_rad / 2))
-    med_depth = float(np.clip(np.median(depth_arr), 0.5, 12.0))
-    ego_speed = round(ego_mag * med_depth / (focal_px + 1e-8) * 30.0, 3)
-    speed_trend = round(ego_speed - speed_history[-1], 3) if speed_history else 0.0
-
-    offset = cx_norm - 0.5
-    if abs(offset) < 0.08:   lateral_drift = "straight"
-    elif offset > 0.15:      lateral_drift = "strong_left"
-    elif offset > 0.08:      lateral_drift = "slight_left"
-    elif offset < -0.15:     lateral_drift = "strong_right"
-    else:                    lateral_drift = "slight_right"
-
-    action, confidence = _classify_action(
-        ego_mag, ego_speed, lat_rat, cx_norm, rot_sc, speed_trend, cfg)
-
-    return {
-        "ego_speed_ms":        ego_speed,
-        "ego_flow_magnitude":  ego_mag,
-        "flow_centroid_x":     cx_norm,
-        "flow_lateral_ratio":  lat_rat,
-        "flow_rotation_score": rot_sc,
-        "lateral_drift":       lateral_drift,
-        "speed_trend_ms":      speed_trend,
-        "action":              action,
-        "action_confidence":   confidence,
-    }
+def estimate(flow: np.ndarray, depth_arr: np.ndarray, dt: float, focal: float,
+             speed_history: list[float], exclude_boxes=(), cfg: EgoConfig = CFG.ego) -> Ego | None:
+    """depth_arr belongs to the first frame of the pair. None when there is too little static scene."""
+    motion = camera_motion(flow, depth_arr, focal, exclude_boxes, cfg)
+    if motion is None or dt <= 0:
+        return None
+    tx, _, tz, _, wy, _ = motion
+    speed   = tz / dt
+    lateral = tx / dt
+    yaw_dps = math.degrees(wy) / dt
+    trend   = speed - speed_history[-1] if speed_history else 0.0
+    return Ego(classify(speed, lateral, yaw_dps, trend, cfg),
+               round(speed, 3), round(lateral, 3), round(yaw_dps, 1), round(trend, 3))
 
 
-def _classify_action(ego_mag, ego_speed, lat_ratio, centroid_x, rot_score, speed_trend, cfg):
-    if ego_mag < cfg.mag_still:
-        return "standing_still", 0.95
-    if ego_speed < 0.15 and speed_trend < -0.25:
-        return "stopping", 0.88
-    if rot_score > cfg.rotation_thresh and ego_mag > cfg.mag_still:
-        if centroid_x > 0.52:    return "turning_left",  0.78
-        elif centroid_x < 0.48:  return "turning_right", 0.78
-    is_lateral = (
-        lat_ratio > cfg.lateral_thresh and
-        ego_mag   > cfg.mag_very_slow  and
-        rot_score < cfg.rotation_thresh
-    )
-    if is_lateral:
-        if centroid_x > 0.65:    return "stepping_left",  0.82
-        elif centroid_x < 0.35:  return "stepping_right", 0.82
-    if ego_mag > cfg.mag_normal:      return "walking_fast",      0.90
-    elif ego_mag > cfg.mag_slow:      return "walking_forward",   0.88
-    elif ego_mag > cfg.mag_very_slow: return "walking_slow",      0.85
-    else:                             return "walking_very_slow", 0.80
+def camera_motion(flow, depth_arr, focal, exclude_boxes=(), cfg: EgoConfig = CFG.ego):
+    """(Tx, Ty, Tz, wx, wy, wz) between the two frames, in metres and radians."""
+    H, W = depth_arr.shape
+    keep = np.zeros((H, W), dtype=bool)
+    keep[::cfg.grid_step_px, ::cfg.grid_step_px] = True
+    for x1, y1, x2, y2 in exclude_boxes:          # moving agents break the static-scene model
+        keep[max(y1, 0):y2, max(x1, 0):x2] = False
+    keep &= (depth_arr >= cfg.min_depth_m) & (depth_arr <= cfg.max_depth_m)
+
+    ys, xs = np.nonzero(keep)
+    if len(xs) < cfg.min_points:
+        return None
+    Z    = depth_arr[ys, xs].astype(np.float64)
+    u, v = flow[ys, xs, 0].astype(np.float64), flow[ys, xs, 1].astype(np.float64)
+    x    = xs - (W - 1) / 2
+    y    = ys - (H - 1) / 2
+    f    = focal
+    zero = np.zeros_like(Z)
+
+    rows_u = np.stack([-f / Z, zero, (x + u) / Z, x * y / f, -(f + x * x / f),  y], axis=1)
+    rows_v = np.stack([zero, -f / Z, (y + v) / Z, f + y * y / f, -x * y / f,   -x], axis=1)
+    A = np.vstack([rows_u, rows_v])
+    b = np.concatenate([u, v])
+    return np.linalg.lstsq(A, b, rcond=None)[0]
+
+
+def classify(speed, lateral, yaw_dps, trend, cfg: EgoConfig = CFG.ego) -> str:
+    if abs(yaw_dps) >= cfg.turn_rate_dps:
+        return "turning_right" if yaw_dps > 0 else "turning_left"
+    if abs(lateral) >= cfg.step_speed_ms and abs(lateral) > abs(speed):
+        return "stepping_right" if lateral > 0 else "stepping_left"
+    if trend <= cfg.stopping_trend_ms and speed < cfg.slow_speed_ms:
+        return "stopping"
+    if speed < cfg.still_speed_ms:
+        return "standing_still"
+    if speed < cfg.slow_speed_ms:
+        return "walking_slow"
+    if speed < cfg.fast_speed_ms:
+        return "walking_forward"
+    return "walking_fast"

@@ -1,4 +1,13 @@
-from walksafe.config import CFG, AgentConfig, OpeningConfig
+"""The nine commands and the rules that pick one per cycle (FR-9 to FR-11).
+
+Rules are tried in order, hazards before route choice. The first that matches
+gives the command; the reason string names the rule and the values behind it.
+"""
+from dataclasses import dataclass
+
+from walksafe.config import CFG, Config, Profile
+from walksafe.interpretation.agents import RISKS, Agent
+from walksafe.interpretation.openings import Opening, best_opening
 
 # SRS §2.4, most cautious first.
 COMMANDS = (
@@ -12,6 +21,7 @@ COMMANDS = (
     "turn_right",
     "walk_forward",
 )
+CAUTIOUS = COMMANDS[:4]
 
 PHRASES = {
     "stop":              "Stop",
@@ -26,113 +36,87 @@ PHRASES = {
 }
 
 
-def phrase(command):
-    return PHRASES.get(command, command.replace("_", " "))
+@dataclass(frozen=True)
+class Decision:
+    command:    str
+    detail:     str
+    reason:     str
+    confidence: float
 
 
-def decide(dets, gap_list, agents: AgentConfig = CFG.agents, openings: OpeningConfig = CFG.openings):
-    """Returns (command, detail, reasoning)."""
-    RISK_ORDER  = {"critical":0, "high":1, "moderate":2, "low":3}
-    top_agents  = sorted(dets,
-                         key=lambda d: (RISK_ORDER.get(d["risk_level"], 3), d["dist_m"]))
-    critical    = [a for a in top_agents if a["risk_level"] == "critical"]
-    approaching = [a for a in top_agents
-                   if a["motion"] in ("approaching", "parallel_counter", "erratic")]
-    crossing    = [a for a in top_agents if "crossing" in a["motion"]]
-    best_gap    = max(gap_list, key=lambda g: g["width_px"]) if gap_list else None
+def phrase(command: str) -> str:
+    return PHRASES[command]
 
-    # Rule 1: critical agent
-    if critical:
-        a   = critical[0]
-        ttc = f" TTC {a['ttc_s']:.1f}s" if a.get("ttc_s") and a["ttc_s"] < 10 else ""
-        return (
-            "stop",
-            f"{a['name']} {a['motion'].replace('-',' ')} at {a['dist_m']:.1f}m{ttc}",
-            f"critical:{a['name']}:{a['motion']}:{a['dist_m']}m"
-        )
 
-    # Rule 2: no gap
-    if not gap_list:
-        return (
-            "stop",
-            "no clear corridor ahead",
-            "no_gap"
-        )
+def decide(agents: list[Agent], openings: list[Opening] | None, confidence: float = 1.0,
+           profile: Profile = CFG.profile, cfg: Config = CFG) -> Decision:
+    """openings is None when the path could not be measured at all."""
+    command, detail, reason = _first_matching_rule(agents, openings, profile, cfg)
+    if confidence < cfg.decision.confidence_low and command not in CAUTIOUS:
+        command = "walk_forward_slow" if command == "walk_forward" else "slow_down"
+        reason += f" | low confidence {confidence:.2f}, downgraded"
+    return Decision(command, detail, reason, round(confidence, 2))
 
-    # Rule 3: crossing agent with short TTC
-    if crossing:
-        a   = crossing[0]
-        ttc = a.get("ttc_s")
-        if ttc and ttc < 3.0:
-            return (
-                "yield",
-                f"{a['name']} crossing in {ttc:.1f}s",
-                f"crossing:{a['name']}:{ttc:.1f}s"
-            )
 
-    # Rule 4: approaching agent
-    if approaching:
-        a   = approaching[0]
-        ttc = a.get("ttc_s")
-        if ttc and ttc < agents.ttc_critical:
-            return (
-                "stop",
-                f"{a['name']} approaching {a['dist_m']:.1f}m TTC {ttc:.1f}s",
-                f"approaching_critical:{a['name']}:{a['dist_m']}m"
-            )
-        if ttc and ttc < agents.ttc_urgent:
-            return (
-                "yield",
-                f"{a['name']} approaching {a['dist_m']:.1f}m",
-                f"approaching_urgent:{a['name']}:{a['dist_m']}m"
-            )
-        if a["dist_m"] < agents.close_distance_m:
-            return (
-                "slow_down",
-                f"{a['name']} ahead {a['dist_m']:.1f}m",
-                f"approaching_close:{a['name']}:{a['dist_m']}m"
-            )
+def _first_matching_rule(agents, openings, profile, cfg):
+    ac, dc = cfg.agents, cfg.decision
+    need   = profile.needed_width_m
+    agents = sorted(agents, key=lambda a: (RISKS.index(a.risk), a.dist_m))
+    best   = best_opening(openings)
 
-    # Rule 5: route toward the best gap
-    dir_    = best_gap["direction"]
-    width_m = best_gap["width_m"]
-    dist_m  = best_gap["dist_m"]
-    detail  = f"{width_m:.1f}m gap {dist_m:.1f}m away"
+    for a in agents:
+        if a.risk == "critical":
+            return "stop", describe(a), f"R1 critical_agent {_values(a)}"
 
-    if width_m < openings.tight_m:
-        cmd_map = {"ahead": "walk_forward_slow", "right": "step_right", "left": "step_left"}
-        cmd     = cmd_map.get(dir_, "slow_down")
-        return (
-            cmd,
-            f"tight corridor {dir_} — {detail}",
-            f"tight_gap_{dir_}:{width_m}m:{dist_m}m"
-        )
+    if openings is not None and best is None:
+        widest = max((o.width_m for o in openings), default=0.0)
+        return "stop", "no clear path ahead", f"R2 no_safe_opening widest={widest:.2f}m need={need:.2f}m"
 
-    if dir_ == "ahead":
-        cmd = "walk_forward" if not approaching else "walk_forward_slow"
-        return (
-            cmd,
-            detail + (" — agent nearby" if approaching else ""),
-            f"gap_ahead:{width_m}m:{dist_m}m"
-        )
+    for a in agents:
+        if a.motion.startswith("crossing") and a.path_time_s is not None and a.path_time_s < dc.crossing_ttc_s:
+            return "yield", describe(a), f"R3 crossing_agent {_values(a)} path_time={a.path_time_s}s"
 
-    if dir_ == "right":
-        return (
-            "step_right",
-            detail,
-            f"gap_right:{width_m}m:{dist_m}m"
-        )
+    approaching = [a for a in agents if a.motion == "approaching" and a.ttc_s is not None]
+    if approaching and approaching[0].ttc_s < ac.ttc_high_s:
+        a = approaching[0]
+        return "stop", describe(a), f"R4 approaching_agent {_values(a)}"
+    if approaching and approaching[0].ttc_s < ac.ttc_moderate_s:
+        a = approaching[0]
+        return "yield", describe(a), f"R5 approaching_agent {_values(a)}"
 
-    if dir_ == "left":
-        return (
-            "step_left",
-            detail,
-            f"gap_left:{width_m}m:{dist_m}m"
-        )
+    close = [a for a in agents if a.in_path and a.dist_m < ac.close_distance_m]
+    if close:
+        a = close[0]
+        return "slow_down", describe(a), f"R6 agent_in_path {_values(a)}"
 
-    # Fallback
-    return (
-        "slow_down",
-        "assess surroundings",
-        "fallback"
-    )
+    if best is not None:
+        values = f"width={best.width_m:.2f}m need={need:.2f}m dist={best.dist_m:.1f}m offset={best.offset_m:+.2f}m"
+        if best.direction == "ahead":
+            tight = best.width_m < need + cfg.openings.tight_extra_m
+            if tight or approaching:
+                return "walk_forward_slow", "narrow path ahead" if tight else describe(approaching[0]), \
+                       f"R7 opening_ahead_with_care {values}"
+            return "walk_forward", "path clear", f"R7 opening_ahead {values}"
+        if abs(best.offset_m) <= dc.step_max_offset_m:
+            return f"step_{best.direction}", f"opening on your {best.direction}", f"R8 opening_beside {values}"
+        return f"turn_{best.direction}", f"opening to your {best.direction}", f"R9 opening_far_side {values}"
+
+    return "slow_down", "path not measured", "R10 fallback openings_unknown"
+
+
+def describe(a: Agent) -> str:
+    """Spoken detail, e.g. "cyclist crossing from your left, 4 metres"."""
+    motion = {
+        "approaching":    " approaching",
+        "receding":       " moving away",
+        "crossing_right": " crossing from your left",
+        "crossing_left":  " crossing from your right",
+    }.get(a.motion, "")
+    where = "" if a.motion.startswith("crossing") else \
+            (" ahead" if a.side == "ahead" else f" on your {a.side}")
+    return f"{a.kind}{motion}{where}, {round(a.dist_m, 1):g} metres"
+
+
+def _values(a: Agent) -> str:
+    return (f"{a.kind}#{a.tid} motion={a.motion} side={a.side} dist={a.dist_m}m "
+            f"approach={a.approach_speed_ms}m/s ttc={a.ttc_s}s risk={a.risk}")

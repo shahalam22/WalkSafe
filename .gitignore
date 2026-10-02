@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# WalkSafe session database
+walksafe.db
+walksafe.db-*

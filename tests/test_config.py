@@ -1,20 +1,25 @@
 from walksafe.config import CFG, load
 
 
-def test_defaults_match_the_prototype_values():
+def test_key_values():
     assert CFG.models.yolo_conf == 0.35
-    assert CFG.models.depth_every_n_frames == 5
-    assert CFG.camera.resize_width == 518
-    assert CFG.agents.ttc_emergency == 1.0
-    assert CFG.openings.min_width_px == 50
+    assert CFG.models.depth_max_age_s == 0.4
+    assert CFG.models.resize_width == 518
+    assert CFG.models.agent_classes == (0, 1, 2, 3, 5, 7)
+    assert CFG.agents.ttc_critical_s < CFG.agents.ttc_high_s < CFG.agents.ttc_moderate_s
+
+
+def test_profile_geometry():
+    assert CFG.profile.needed_width_m == 0.75
+    assert round(CFG.profile.focal_px(518), 1) == 369.9
 
 
 def test_yaml_override_changes_only_the_named_value(tmp_path):
     path = tmp_path / "exp.yaml"
-    path.write_text("agents:\n  ttc_emergency: 1.5\n")
+    path.write_text("agents:\n  ttc_critical_s: 1.5\n")
     cfg = load(str(path))
-    assert cfg.agents.ttc_emergency == 1.5
-    assert cfg.agents.ttc_critical == CFG.agents.ttc_critical
+    assert cfg.agents.ttc_critical_s == 1.5
+    assert cfg.agents.ttc_high_s == CFG.agents.ttc_high_s
     assert cfg.models == CFG.models
 
 

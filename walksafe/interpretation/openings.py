@@ -1,50 +1,74 @@
-import math
+"""Walkable openings, measured in metres (FR-7) and compared against the user's width (FR-8).
+
+A column of the image is open when nothing at body height is nearer than an
+absolute free distance. Columns covered by a detected agent are only as free
+as that agent is far. Each run of open columns is an opening; its width is
+measured at the distance of whatever bounds it, which is where the user has
+to squeeze past.
+"""
+from dataclasses import dataclass
 
 import numpy as np
 
-from walksafe.config import CFG, CameraConfig, OpeningConfig
+from walksafe.config import CFG, OpeningConfig, Profile
 
 
-def find(depth_arr, cfg: OpeningConfig = CFG.openings, camera: CameraConfig = CFG.camera):
-    H, W      = depth_arr.shape
-    surface_y = int(H * cfg.surface_top_frac)
-    strip     = depth_arr[surface_y:, :]
-    col_med   = np.median(strip, axis=0)
-    norm      = (col_med - col_med.min()) / (col_med.max() - col_med.min() + 1e-8)
-    threshold = np.percentile(norm, 55)
-    open_mask = (norm >= threshold).astype(np.uint8)
-
-    gaps = []
-    in_gap, start = False, 0
-    for x, val in enumerate(open_mask):
-        if val and not in_gap:
-            in_gap, start = True, x
-        elif not val and in_gap:
-            w = x - start
-            if w >= cfg.min_width_px:
-                gaps.append(_gap_dict(depth_arr, surface_y, W, start, x, camera))
-            in_gap = False
-    if in_gap:
-        w = W - start
-        if w >= cfg.min_width_px:
-            gaps.append(_gap_dict(depth_arr, surface_y, W, start, W, camera))
-    return gaps
+@dataclass(frozen=True)
+class Opening:
+    x1_px:       int
+    x2_px:       int
+    width_m:     float
+    dist_m:      float      # free distance through the opening
+    offset_m:    float      # lateral offset of its centre, positive = right
+    direction:   str        # left / ahead / right
+    wide_enough: bool
 
 
-def _gap_dict(depth_arr, surface_y, W, x1, x2, camera):
-    cx_g     = (x1 + x2) // 2
-    width_px = x2 - x1
-    strip    = depth_arr[surface_y:, x1:x2]
-    dist_m   = float(np.median(strip)) if strip.size > 0 else 0.0
-    width_m  = round(
-        width_px / W * dist_m * 2 * math.tan(math.radians(camera.fov_deg / 2)), 2
-    ) if dist_m > 0 else round(width_px / W * 3.0, 2)
-    offset   = cx_g - W // 2
-    direction = "ahead" if abs(offset) < W*0.15 else ("right" if offset > 0 else "left")
-    return {
-        "cx_px":     cx_g,
-        "width_px":  width_px,
-        "width_m":   width_m,
-        "dist_m":    round(dist_m, 2),
-        "direction": direction,
-    }
+def free_distance(depth_arr: np.ndarray, agents=(), cfg: OpeningConfig = CFG.openings) -> np.ndarray:
+    """Distance to the nearest thing at body height, per image column."""
+    H, W = depth_arr.shape
+    band = depth_arr[int(H * cfg.band_top_frac):int(H * cfg.band_bottom_frac), :]
+    free = np.minimum(np.percentile(band, cfg.free_percentile, axis=0), cfg.max_range_m)
+    for a in agents:
+        x1, x2 = max(a.box[0], 0), min(a.box[2], W)
+        free[x1:x2] = np.minimum(free[x1:x2], a.dist_m)
+    return free
+
+
+def find(depth_arr: np.ndarray, agents=(), profile: Profile = CFG.profile,
+         cfg: OpeningConfig = CFG.openings) -> list[Opening]:
+    free      = free_distance(depth_arr, agents, cfg)
+    open_cols = np.concatenate([[False], free >= cfg.min_free_distance_m, [False]])
+    edges     = np.flatnonzero(np.diff(open_cols.astype(np.int8)))
+    return [_measure(free, x1, x2, profile, cfg)
+            for x1, x2 in zip(edges[::2], edges[1::2], strict=True)
+            if x2 - x1 >= cfg.min_width_px]
+
+
+def best_opening(openings: list[Opening] | None) -> Opening | None:
+    """The opening to steer for: straight ahead if possible, else the nearest to the side."""
+    safe = [o for o in openings or [] if o.wide_enough]
+    if not safe:
+        return None
+    return min(safe, key=lambda o: (o.direction != "ahead", abs(o.offset_m), -o.width_m))
+
+
+def _measure(free, x1, x2, profile, cfg) -> Opening:
+    W      = len(free)
+    focal  = profile.focal_px(W)
+    bounds = [free[x] for x in (x1 - 1, x2) if 0 <= x < W]
+    at_m   = float(min(bounds)) if bounds else cfg.min_free_distance_m
+
+    width_m  = (x2 - x1) / focal * at_m
+    offset_m = ((x1 + x2) / 2 - W / 2) / focal * at_m
+    half_px  = profile.needed_width_m / 2 * focal / at_m
+    if x1 <= W / 2 - half_px and x2 >= W / 2 + half_px:
+        direction = "ahead"
+    else:
+        direction = "right" if offset_m > 0 else "left"
+
+    return Opening(
+        x1_px=int(x1), x2_px=int(x2), width_m=round(width_m, 2),
+        dist_m=round(float(np.median(free[x1:x2])), 2), offset_m=round(offset_m, 2),
+        direction=direction, wide_enough=width_m >= profile.needed_width_m,
+    )

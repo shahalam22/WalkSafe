@@ -20,12 +20,12 @@ The system runs in a Gradio web app accessible from any smartphone browser. It s
 
 | Feature | Description |
 |---|---|
-| Depth Estimation | Dense per-pixel depth map updated every 5 frames |
+| Depth Estimation | Dense per-pixel depth map, never more than 0.4 s old |
 | Object Detection | Detects people, vehicles, and obstacles with confidence filtering |
-| Motion Tracking | 8-frame trajectory history per agent with motion classification |
+| Motion Tracking | Per-session ByteTrack; speeds fitted over 2 s of timestamped history |
 | Time-to-Collision | Calculates TTC for every tracked agent |
-| Gap Detection | Identifies and measures safe walking corridors (left, ahead, right) |
-| Ego Motion Analysis | Detects user action (still, walking, turning) and speed via optical flow |
+| Openings | Openings at body height, measured in metres against the user's width |
+| Ego Motion Analysis | Walking speed, sideways steps and turns from optical flow and metric depth |
 | Navigation Commands | Spoken guidance: `walk_forward`, `stop`, `step_left`, `step_right`, `turn_left`, `turn_right`, `yield`, `slow_down` |
 | Fusion Visualization | Side-by-side camera / depth / flow / detection panel with annotated advisory strip |
 | Session Logging | All frames, agents, gaps, and decisions recorded to SQLite |
@@ -53,23 +53,33 @@ tests/                  # pytest, CPU only, fake models
 
 ## Navigation Decision Logic
 
-The suggestion engine evaluates every frame in priority order:
+The models measure, the rules decide. Each cycle, [walksafe/decision.py](walksafe/decision.py)
+tries these rules in order and the first that matches gives the one command:
 
-1. Any agent with **critical** risk (TTC < 1 s or distance < 1 m and approaching) → **stop**
-2. No navigable gap found → **stop**
-3. Crossing agent with TTC < 3 s → **yield**
-4. Approaching agent with low TTC → **stop** or **yield**
-5. Approaching agent within close range → **slow\_down**
-6. Route toward the best available gap → **step / turn** based on direction and width
-7. Fallback → **slow\_down**
+| Rule | When | Command |
+|---|---|---|
+| R1 | An agent at **critical** risk | `stop` |
+| R2 | No opening is as wide as shoulder width + clearance margin | `stop` |
+| R3 | A crossing agent will reach the user's path within 3 s | `yield` |
+| R4 / R5 | An approaching agent with TTC < 2 s / < 4 s | `stop` / `yield` |
+| R6 | Any agent in the user's path closer than 3 m | `slow_down` |
+| R7 | The best opening is straight ahead | `walk_forward` (`walk_forward_slow` if tight or someone is approaching) |
+| R8 | The best opening is beside the path (≤ 1 m off centre) | `step_left` / `step_right` |
+| R9 | The best opening is further to the side | `turn_left` / `turn_right` |
+| R10 | The path could not be measured (frame rejected) | `slow_down` |
 
-Risk levels assigned to each tracked agent:
+When confidence is low (unsteady depth, or a close agent not yet tracked),
+`walk_forward` becomes `walk_forward_slow` and steps or turns become `slow_down`.
+
+Agent motion is one of `approaching`, `receding`, `crossing_left`, `crossing_right`,
+`static`, or `new` (not enough track history yet). Speeds and TTC are fitted
+against frame capture times, so they do not depend on the frame rate.
 
 | Risk | Condition |
 |---|---|
-| Critical | TTC < 1.0 s or (dist < 1.0 m and approaching) |
+| Critical | TTC < 1.0 s, or closer than 1.0 m and approaching |
 | High | TTC < 2.0 s |
-| Moderate | TTC < 4.0 s or erratic motion |
+| Moderate | TTC < 4.0 s |
 | Low | All other cases |
 
 ---
@@ -124,11 +134,11 @@ On first run, DepthPro and RAFT weights are downloaded automatically from Huggin
    - A fused visualization (camera + depth + flow + detections)
    - A color-coded advisory strip showing the recommended command, ego action, best gap, and most critical agent
    - A spoken navigation command via the browser's TTS
-5. Press **Reset Session** to end the current session and start a new one.
+5. Press **Reset Tracker** to end the current session and start a new one.
 
 ### Dashboard Tab
 
-Select a session from the dropdown and click **Load** to view:
+Press **Refresh**, then select a session from the dropdown to view:
 
 - Total frames, average speed, agent encounters, critical events
 - Navigation command distribution
@@ -140,19 +150,23 @@ Select a session from the dropdown and click **Load** to view:
 
 ## Configuration
 
-All parameters are in [walksafe/config.py](walksafe/config.py). Key values:
+Every tunable value is in [walksafe/config.py](walksafe/config.py), grouped into
+frozen dataclasses. Point `WALKSAFE_CONFIG` at a YAML file to override values:
 
-| Parameter | Default | Description |
-|---|---|---|
-| `YOLO_CONF` | 0.35 | Detection confidence threshold |
-| `DEPTH_UPDATE_EVERY` | 5 | Frames between full depth inference runs |
-| `VIDEO_WIDTH` | 518 | Input resize width (must be 14-pixel aligned) |
-| `MIN_GAP_WIDTH_PX` | 50 | Minimum gap width to consider navigable |
-| `HISTORY_LEN` | 8 | Agent trajectory history in frames |
-| `TTC_EMERGENCY` | 1.0 | TTC threshold for critical risk (seconds) |
-| `TTC_CRITICAL` | 2.0 | TTC threshold for high risk (seconds) |
-| `TTC_URGENT` | 4.0 | TTC threshold for moderate risk (seconds) |
-| `FOV_DEG` | 70 | Estimated camera horizontal field of view |
+```yaml
+agents:
+  ttc_critical_s: 1.5
+```
+
+| Section | Examples |
+|---|---|
+| `profile` | camera field of view, shoulder width, clearance margin, depth scale (defaults until the phone sends the user's setup) |
+| `models` | model ids, YOLO confidence, agent classes, depth age cap (0.4 s) |
+| `agents` | speed-fit window, motion thresholds, TTC and risk thresholds |
+| `ego` | thresholds for walking, stepping and turning |
+| `openings` | body-height band, look-ahead distance (3.5 m) |
+| `decision` | crossing time, step-versus-turn offset, low-confidence threshold |
+| `quality` | dark, bright and blur limits; confidence scores |
 
 ---
 

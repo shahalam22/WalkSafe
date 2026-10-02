@@ -1,120 +1,153 @@
-import math
+"""Agents: motion, approach speed, time to collision and risk (FR-4 to FR-6).
+
+Speeds are fitted against the frames' capture times, never a frame count, so
+they come out the same at any frame rate (FR-5).
+"""
 from collections import deque
+from dataclasses import dataclass
 
 import numpy as np
 
-from walksafe.config import CFG, AgentConfig
+from walksafe.config import CFG, AgentConfig, Profile
 from walksafe.perception import Box
 
-CLS_NAME = {
-    0:"person", 1:"bicycle", 2:"car", 3:"motorcycle", 5:"bus",
-    6:"train", 7:"truck", 9:"traffic_light", 10:"fire_hydrant",
-    11:"stop_sign", 16:"dog", 17:"horse", 56:"chair", 57:"couch",
-}
-for i in range(80):
-    CLS_NAME.setdefault(i, f"obj{i}")
+NAMES = {0: "person", 1: "cyclist", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+RISKS = ("critical", "high", "moderate", "low")
 
 
-def classify_motion(tid, cx, cy, fi, depth_m, track_history, cfg: AgentConfig = CFG.agents):
-    if tid not in track_history:
-        track_history[tid] = deque(maxlen=cfg.motion_window)
-    track_history[tid].append((cx, cy, fi, depth_m))
-    hist = track_history[tid]
+@dataclass(frozen=True)
+class TrackPoint:
+    ts:        float
+    dist_m:    float
+    lateral_m: float          # positive = to the user's right
 
-    if len(hist) < 4:
+
+@dataclass(frozen=True)
+class Agent:
+    tid:               int    # -1 until the tracker confirms it
+    kind:              str
+    box:               tuple[int, int, int, int]
+    dist_m:            float
+    dist_sigma:        float  # spread of the depth patch relative to its distance
+    lateral_m:         float
+    side:              str    # left / ahead / right
+    in_path:           bool   # overlaps the corridor the user needs
+    motion:            str    # new / static / approaching / receding / crossing_left / crossing_right
+    approach_speed_ms: float | None
+    lateral_speed_ms:  float | None
+    ttc_s:             float | None
+    path_time_s:       float | None   # a crossing agent's time to reach the user's corridor
+    risk:              str
+    track_points:      int
+
+
+Tracks = dict[int, deque]
+
+
+def measure(boxes: list[Box], depth_arr: np.ndarray, ts: float, tracks: Tracks,
+            profile: Profile = CFG.profile, cfg: AgentConfig = CFG.agents) -> list[Agent]:
+    forget_old_tracks(tracks, ts, cfg)
+    W         = depth_arr.shape[1]
+    focal     = profile.focal_px(W)
+    half_path = profile.needed_width_m / 2
+    agents    = []
+
+    for b in boxes:
+        if b.cls not in NAMES:
+            continue
+        dist, sigma = box_distance(depth_arr, b, cfg)
+        left_m      = (b.x1 - W / 2) / focal * dist
+        right_m     = (b.x2 - W / 2) / focal * dist
+        lateral     = (left_m + right_m) / 2
+        in_path     = left_m < half_path and right_m > -half_path
+        side        = "ahead" if in_path else ("right" if lateral > 0 else "left")
+
+        points = remember(tracks, b.tid, TrackPoint(ts, dist, lateral), cfg) if b.tid >= 0 else []
+        approach, lat_speed = fit_speeds(points, cfg)
+        motion = classify_motion(approach, lat_speed, cfg)
+        ttc    = time_to_collision(dist, approach, cfg)
+
+        agents.append(Agent(
+            tid=b.tid, kind=NAMES[b.cls], box=(b.x1, b.y1, b.x2, b.y2),
+            dist_m=round(dist, 2), dist_sigma=round(sigma, 3),
+            lateral_m=round(lateral, 2), side=side, in_path=in_path, motion=motion,
+            approach_speed_ms=_round(approach), lateral_speed_ms=_round(lat_speed),
+            ttc_s=_round(ttc), path_time_s=_round(time_to_path(lateral, lat_speed, half_path)),
+            risk=risk_level(motion, dist, ttc, cfg), track_points=len(points),
+        ))
+    return agents
+
+
+def box_distance(depth_arr, b: Box, cfg: AgentConfig = CFG.agents) -> tuple[float, float]:
+    """Near percentile of the lower part of the box, where the agent meets the ground."""
+    H, W  = depth_arr.shape
+    top   = b.y2 - int((b.y2 - b.y1) * cfg.box_lower_frac)
+    patch = depth_arr[max(top, 0):min(b.y2, H), max(b.x1, 0):min(b.x2, W)]
+    if patch.size == 0:
+        patch = depth_arr[max(min(b.y2, H) - 1, 0), max(b.x1, 0):max(min(b.x2, W), 1)]
+    dist = float(np.percentile(patch, cfg.dist_percentile))
+    # Spread over the agent itself; the box also holds background, which is far away.
+    near = patch[patch <= dist + cfg.foreground_depth_m]
+    return dist, float(np.std(near)) / max(dist, 1e-6)
+
+
+def remember(tracks: Tracks, tid: int, point: TrackPoint, cfg: AgentConfig = CFG.agents) -> list[TrackPoint]:
+    points = tracks.setdefault(tid, deque())
+    points.append(point)
+    while points[0].ts < point.ts - cfg.motion_window_s:
+        points.popleft()
+    return list(points)
+
+
+def forget_old_tracks(tracks: Tracks, ts: float, cfg: AgentConfig = CFG.agents) -> None:
+    for tid in [t for t, pts in tracks.items() if pts[-1].ts < ts - cfg.forget_after_s]:
+        del tracks[tid]
+
+
+def fit_speeds(points: list[TrackPoint], cfg: AgentConfig = CFG.agents) -> tuple[float | None, float | None]:
+    """Approach speed (positive = closing) and lateral speed, in m/s, from a line fit over time."""
+    if len(points) < cfg.min_track_points or points[-1].ts - points[0].ts < cfg.min_track_span_s:
+        return None, None
+    t = np.array([p.ts for p in points]) - points[0].ts
+    approach = -np.polyfit(t, [p.dist_m for p in points], 1)[0]
+    lateral  =  np.polyfit(t, [p.lateral_m for p in points], 1)[0]
+    return float(approach), float(lateral)
+
+
+def classify_motion(approach: float | None, lateral: float | None, cfg: AgentConfig = CFG.agents) -> str:
+    if approach is None:
         return "new"
-
-    x0, y0, _, d0 = hist[0]
-    xn, yn, _, dn = hist[-1]
-    dx = xn - x0;  dy = yn - y0
-    dist_px = (dx**2 + dy**2)**0.5
-    if dist_px < 5:
-        return "static"
-
-    depth_delta = (dn - d0) if (d0 > 0 and dn > 0) else 0
-    lateral_dom = abs(dx) > abs(dy) * 1.2
-    depth_dom   = abs(depth_delta) > 0.3 and not lateral_dom
-
-    if len(hist) >= 6:
-        angles = []
-        for i in range(1, len(hist)):
-            px2, py2 = hist[i-1][0], hist[i-1][1]
-            cx2, cy2 = hist[i][0],   hist[i][1]
-            if (cx2-px2)**2 + (cy2-py2)**2 > 4:
-                angles.append(math.degrees(math.atan2(cy2-py2, cx2-px2)))
-        if len(angles) >= 4 and float(np.std(np.diff(angles))) > 60:
-            return "erratic"
-
-    rs  = ((hist[-1][0]-hist[-2][0])**2 + (hist[-1][1]-hist[-2][1])**2)**0.5
-    es  = ((hist[-3][0]-hist[-4][0])**2 + (hist[-3][1]-hist[-4][1])**2)**0.5
-    if rs < 3 and es > 8:  return "stopping"
-    if rs > 8 and es < 3:  return "starting"
-    if lateral_dom:
-        return "crossing-R" if dx > 0 else "crossing-L"
-    if depth_dom:
-        if depth_delta < 0:
-            return "parallel_counter" if abs(dx) < 15 else "approaching"
-        else:
-            return "parallel_same" if abs(dx) < 15 else "receding"
-    if dy > 8:    return "approaching"
-    elif dy < -8: return "receding"
+    if abs(lateral) >= cfg.crossing_speed_ms and abs(lateral) > abs(approach):
+        return "crossing_right" if lateral > 0 else "crossing_left"
+    if approach >= cfg.approach_speed_ms:
+        return "approaching"
+    if approach <= -cfg.approach_speed_ms:
+        return "receding"
     return "static"
 
 
-def risk_level(motion, dist_m, ttc_s, cfg: AgentConfig = CFG.agents):
-    if ttc_s is not None and ttc_s < cfg.ttc_emergency:  return "critical"
-    if dist_m > 0 and dist_m < 1.0 and motion in ("approaching","parallel_counter"):
-        return "critical"
-    if ttc_s is not None and ttc_s < cfg.ttc_critical:   return "high"
-    if ttc_s is not None and ttc_s < cfg.ttc_urgent:     return "moderate"
-    if motion == "erratic":                              return "moderate"
+def time_to_collision(dist_m: float, approach: float | None, cfg: AgentConfig = CFG.agents) -> float | None:
+    if approach is None or approach < cfg.ttc_min_closing_ms:
+        return None
+    return min(dist_m / approach, cfg.ttc_max_s)
+
+
+def time_to_path(lateral_m: float, lateral_speed: float | None, half_path: float) -> float | None:
+    outside = abs(lateral_m) - half_path
+    if outside <= 0:
+        return 0.0
+    if lateral_speed is None or lateral_m * lateral_speed >= 0:     # not moving toward the path
+        return None
+    return outside / abs(lateral_speed)
+
+
+def risk_level(motion: str, dist_m: float, ttc_s: float | None, cfg: AgentConfig = CFG.agents) -> str:
+    if ttc_s is not None and ttc_s < cfg.ttc_critical_s:                return "critical"
+    if dist_m < cfg.critical_distance_m and motion == "approaching":   return "critical"
+    if ttc_s is not None and ttc_s < cfg.ttc_high_s:                    return "high"
+    if ttc_s is not None and ttc_s < cfg.ttc_moderate_s:                return "moderate"
     return "low"
 
 
-def measure(boxes: list[Box], depth_arr, frame_idx, track_history, cfg: AgentConfig = CFG.agents):
-    """Distance, motion, approach speed, TTC and risk for each detected box."""
-    H    = depth_arr.shape[0]
-    dets = []
-
-    for b in boxes:
-        x1, y1, x2, y2, tid = b.x1, b.y1, b.x2, b.y2, b.tid
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
-
-        fy1   = y1 + int((y2 - y1) * 0.6)
-        patch = depth_arr[max(fy1,0):y2, max(x1,0):x2]
-        if patch.size > 0:
-            dist_m       = round(float(np.percentile(patch, 10)), 2)
-            dist_m_sigma = round(float(np.std(patch)), 3)
-        else:
-            dist_m       = round(max(0.3, min(6.0, (1.0 - y2/H) * 9.0)), 2)
-            dist_m_sigma = -1.0
-
-        motion = classify_motion(tid, cx, cy, frame_idx, dist_m, track_history, cfg) \
-                 if tid >= 0 else "static"
-
-        hist = track_history.get(tid, [])
-        if len(hist) >= 4:
-            d0 = hist[0][3];  dn = hist[-1][3]
-            dt = len(hist) / 30.0
-            approach_speed = round((d0-dn)/(dt+1e-8), 3) \
-                             if (d0 > 0 and dn > 0) else 0.0
-        else:
-            approach_speed = 0.0
-
-        ttc = round(dist_m / (approach_speed + 1e-8), 2) \
-              if approach_speed > 0.1 and dist_m > 0 else None
-        if ttc: ttc = min(ttc, 99.0)
-
-        dets.append({
-            "cls": b.cls, "name": CLS_NAME.get(b.cls, "?"),
-            "conf": round(b.conf, 2), "box": [x1, y1, x2, y2],
-            "tid": tid, "motion": motion,
-            "cx": cx, "cy": cy,
-            "dist_m": dist_m, "dist_m_sigma": dist_m_sigma,
-            "approach_speed_ms": approach_speed,
-            "ttc_s": ttc, "risk_level": risk_level(motion, dist_m, ttc, cfg),
-            "track_age": len(hist),
-        })
-
-    return dets
+def _round(x: float | None, nd: int = 2) -> float | None:
+    return None if x is None else round(x, nd)

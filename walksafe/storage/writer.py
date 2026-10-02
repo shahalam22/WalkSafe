@@ -5,6 +5,8 @@ import threading
 import time
 import uuid
 
+from walksafe.interpretation.openings import best_opening
+
 from .schema import DB_PATH, create_tables
 
 log = logging.getLogger(__name__)
@@ -26,21 +28,31 @@ def init():
     log.info("DB ready, session=%s path=%s", _session_id[:8], DB_PATH)
 
 
-def enqueue(frame_idx, command, detail, reasoning, ego, gap_list, dets):
-    """Non-blocking. Drops silently if queue is full — never blocks the pipeline."""
-    try:
-        _queue.put_nowait({
-            "frame_idx": frame_idx,
-            "ts":        time.time(),
-            "command":   command,
-            "detail":    detail,
-            "reasoning": reasoning,
-            "ego":       ego,
-            "gaps":      gap_list,
-            "agents":    dets,
-        })
-    except queue.Full:
-        pass
+def enqueue(frame_idx, r):
+    """Non-blocking; r is a pipeline.FrameResult."""
+    best = best_opening(r.openings)
+    _queue.put_nowait({
+        "frame_idx": frame_idx,
+        "ts":        time.time(),
+        "command":   r.decision.command,
+        "detail":    r.decision.detail,
+        "reasoning": r.decision.reason,
+        "ego":       {"action": r.ego.action, "ego_speed_ms": r.ego.speed_ms,
+                      "speed_trend_ms": r.ego.speed_trend_ms},
+        "best":      _gap_row(best) if best else None,
+        "gaps":      [_gap_row(o) for o in r.openings or []],
+        "agents":    [{
+            "tid": a.tid, "name": a.kind, "dist_m": a.dist_m, "dist_m_sigma": a.dist_sigma,
+            "approach_speed_ms": a.approach_speed_ms, "ttc_s": a.ttc_s, "risk_level": a.risk,
+            "motion": a.motion, "track_age": a.track_points,
+            "cx": (a.box[0] + a.box[2]) // 2, "cy": (a.box[1] + a.box[3]) // 2,
+        } for a in r.agents],
+    })
+
+
+def _gap_row(o):
+    return {"direction": o.direction, "width_m": o.width_m, "dist_m": o.dist_m,
+            "cx_px": (o.x1_px + o.x2_px) // 2, "width_px": o.x2_px - o.x1_px}
 
 
 def new_session():
@@ -109,7 +121,7 @@ def _flush(con, batch, session_id):
         agents = item["agents"] or []
         ts, fi = item["ts"], item["frame_idx"]
 
-        best   = max(gaps, key=lambda g: g["width_m"]) if gaps else None
+        best   = item["best"]
         n_crit = sum(1 for a in agents if a.get("risk_level") == "critical")
 
         frame_rows.append((

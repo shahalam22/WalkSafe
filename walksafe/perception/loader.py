@@ -19,7 +19,7 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
     models = Models(
         depth    = DepthPro(cfg.depth_model_id, device),
         flow     = RaftSmall(device),
-        detector = YoloTracker(cfg.yolo_model, cfg.yolo_conf),
+        detector = YoloTracker(cfg),
     )
     log.info("All models loaded")
     return models

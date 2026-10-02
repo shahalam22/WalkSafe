@@ -1,22 +1,34 @@
 import sqlite3
 
+import numpy as np
+from conftest import fake_models
+
+from walksafe import pipeline
+from walksafe.interpretation.openings import best_opening
+from walksafe.session import Session
 from walksafe.storage import schema, writer
 
 
-def test_flush_writes_frame_agent_and_gap_rows(tmp_path, monkeypatch):
+def drain():
+    items = []
+    while not writer._queue.empty():
+        items.append(writer._queue.get_nowait())
+    return items
+
+
+def test_logged_best_opening_is_the_one_the_decision_used(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     schema.create_tables()
+    m = fake_models()
+    r = pipeline.process(m, Session(m.detector.new_tracker()),
+                         np.random.default_rng(0).integers(0, 255, (480, 640, 3), dtype=np.uint8), 0.0)
+    drain()
+    writer.enqueue(1, r)
     con = sqlite3.connect(schema.DB_PATH)
-    item = {
-        "frame_idx": 1, "ts": 100.0, "command": "walk_forward", "detail": "d", "reasoning": "r",
-        "ego": {"action": "walking_forward", "ego_speed_ms": 1.1},
-        "gaps": [{"direction": "ahead", "width_m": 1.5, "dist_m": 4.0, "cx_px": 259, "width_px": 150}],
-        "agents": [{"tid": 3, "name": "person", "risk_level": "low", "dist_m": 5.0}],
-    }
-    writer._flush(con, [item], "s1")
-    assert con.execute("SELECT command, best_gap_width_m FROM frames").fetchall() == [("walk_forward", 1.5)]
-    assert con.execute("SELECT track_id, name FROM agents").fetchall() == [(3, "person")]
-    assert con.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 1
+    writer._flush(con, drain(), "s1")
+    best = best_opening(r.openings)
+    row  = con.execute("SELECT command, reasoning, best_gap_width_m, best_gap_direction FROM frames").fetchone()
+    assert row == (r.decision.command, r.decision.reason, best.width_m, best.direction)
 
 
 def test_log_queue_has_no_size_limit():

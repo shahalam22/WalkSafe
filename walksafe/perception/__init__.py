@@ -22,7 +22,11 @@ class DepthEstimator(Protocol):
 
 
 class Detector(Protocol):
-    def track(self, frame_bgr: np.ndarray) -> list[Box]: ...
+    def new_tracker(self) -> object:
+        """Fresh tracker state; each session owns one."""
+
+    def track(self, frame_bgr: np.ndarray, tracker: object) -> list[Box]:
+        """Agent boxes. Detections the tracker has not confirmed yet come back with tid -1."""
 
 
 class FlowEstimator(Protocol):
