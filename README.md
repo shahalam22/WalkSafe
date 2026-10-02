@@ -15,7 +15,9 @@ The requirements are in [docs/SRS.md](docs/SRS.md); how they map to code and tes
 
 **The models measure, the rules decide.** Three pretrained models measure the scene:
 
-- **DepthPro**: depth in metres for every pixel
+- **Depth Anything V2 Metric (Small)**: depth in metres for every pixel. The SRS chose
+  DepthPro, but it took about 6.6 s a frame on a Colab T4, far too slow for guidance; it
+  is still one setting away (`models.depth_model_id: apple/DepthPro-hf`)
 - **YOLOv8n + ByteTrack**: people, cyclists and vehicles, with identities kept across frames
 - **RAFT-Small**: optical flow, from which the user's own movement is worked out
 
@@ -48,7 +50,7 @@ walksafe/                 the Python package (python -m walksafe)
   pipeline.py             one frame through perception, interpretation and decision
   decision.py             the nine commands and the ordered rules
   pages.py                publishes the phone page and today's server address to GitHub Pages
-  perception/             DepthPro, YOLOv8 + ByteTrack and RAFT behind small Protocols
+  perception/             depth model, YOLOv8 + ByteTrack and RAFT behind small Protocols
   interpretation/         agents (motion, speed, TTC, risk), ego motion, openings, frame quality
   storage/                SQLite schema and migrations, background writer, dashboard queries
   ui/                     Gradio dashboard and the diagnostic fusion panel
@@ -152,8 +154,8 @@ Spoken, answered with buttons, and usable without sight:
    the user is asked to hold the phone level.
 4. **Depth check.** The user faces a flat wall at a chosen distance (a cane length is a good
    measure), and the server measures it. More than 25 % off fails setup. Otherwise the ratio
-   becomes the depth scale. DepthPro's own field-of-view estimate is used when plausible,
-   otherwise the standard 70°.
+   becomes the depth scale. If the depth model estimates the camera's field of view
+   (DepthPro does), that is used; otherwise the standard 45° for a phone held upright.
 5. **Direction test.** Facing an open space, the user takes one big step left between two
    tones. The phone takes a picture at each tone, and the server measures how far the camera
    moved sideways between them. At least 15 cm left passes. 15 cm to the right means left and
@@ -337,7 +339,8 @@ The GPU tests and scripts run from the notebook's optional cells.
 
 ## Acknowledgements
 
-- [Apple DepthPro](https://huggingface.co/apple/DepthPro-hf): monocular metric depth
+- [Depth Anything V2](https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf)
+  and [Apple DepthPro](https://huggingface.co/apple/DepthPro-hf): monocular metric depth
 - [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) and ByteTrack: detection and tracking
 - [RAFT](https://github.com/princeton-vl/RAFT) via `torchvision`: optical flow
 - [FastAPI](https://fastapi.tiangolo.com/) and [Gradio](https://www.gradio.app/): server and dashboard

@@ -72,7 +72,7 @@ def test_detected_agents_block_their_columns():
 
 
 def test_best_opening_prefers_ahead_then_the_nearest_side():
-    depth = obstacle(street(), px(-0.6, 2.0), px(0.6, 2.0), 2.0)      # blocked straight ahead
+    depth = obstacle(street(), px(-0.3, 3.0), px(0.3, 3.0), 3.0)      # blocked straight ahead
     openings = find(depth)
     assert {o.direction for o in openings} == {"left", "right"}
     best = best_opening(openings)

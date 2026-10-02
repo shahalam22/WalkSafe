@@ -11,7 +11,7 @@ def test_key_values():
 
 def test_profile_geometry():
     assert CFG.profile.needed_width_m == 0.75
-    assert round(CFG.profile.focal_px(518), 1) == 369.9
+    assert round(CFG.profile.focal_px(518), 1) == 625.3      # 45 degrees
 
 
 def test_yaml_override_changes_only_the_named_value(tmp_path):

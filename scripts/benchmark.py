@@ -45,12 +45,13 @@ def main():
     ap.add_argument("--video")
     ap.add_argument("--frames", type=int, default=60)
     ap.add_argument("--warmup", type=int, default=5)
-    ap.add_argument("--fp16", action="store_true", help="run DepthPro in half precision")
+    ap.add_argument("--fp16", action="store_true", help="run the depth model in half precision")
+    ap.add_argument("--depth-model", default=CFG.models.depth_model_id, help="e.g. apple/DepthPro-hf to compare")
     ap.add_argument("--flow-scale", type=float, default=CFG.models.flow_scale, help="RAFT input scale")
     ap.add_argument("--depth-max-age", type=float, default=CFG.models.depth_max_age_s)
     args = ap.parse_args()
 
-    models_cfg = replace(CFG.models, depth_fp16=args.fp16, flow_scale=args.flow_scale,
+    models_cfg = replace(CFG.models, depth_model_id=args.depth_model, depth_fp16=args.fp16, flow_scale=args.flow_scale,
                          depth_max_age_s=args.depth_max_age)
     cfg     = replace(CFG, models=models_cfg)
     models  = loader.load(models_cfg)
@@ -68,7 +69,8 @@ def main():
 
     totals.sort()
     report = {
-        "options": {"fp16": args.fp16, "flow_scale": args.flow_scale, "depth_max_age_s": args.depth_max_age,
+        "options": {"depth_model": args.depth_model, "fp16": args.fp16, "flow_scale": args.flow_scale,
+                    "depth_max_age_s": args.depth_max_age,
                     "source": args.video or "noise", "frames": args.frames},
         "decisions_per_s": round(1000 / statistics.mean(totals), 2),
         "ms_mean": round(statistics.mean(totals), 1),

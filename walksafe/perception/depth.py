@@ -4,19 +4,20 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoImageProcessor, DepthProForDepthEstimation
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 log = logging.getLogger(__name__)
 
 
-class DepthPro:
+class DepthModel:
+    """A metric depth model from Hugging Face: Depth Anything V2 Metric by default, or DepthPro."""
+
     def __init__(self, model_id: str, device: str, fp16: bool = False):
-        log.info("Loading DepthPro (%s, fp16=%s)", model_id, fp16)
+        log.info("Loading depth model %s (fp16=%s)", model_id, fp16)
         self.device    = device
         self.dtype     = torch.float16 if fp16 else torch.float32
-        # AutoImageProcessor: transformers 5 dropped DepthProImageProcessorFast.
-        self.processor = AutoImageProcessor.from_pretrained(model_id, use_fast=True)
-        self.model     = DepthProForDepthEstimation.from_pretrained(model_id).to(device, self.dtype).eval()
+        self.processor = AutoImageProcessor.from_pretrained(model_id)
+        self.model     = AutoModelForDepthEstimation.from_pretrained(model_id).to(device, self.dtype).eval()
         self.last_fov_deg: float | None = None
 
     def estimate(self, frame_bgr: np.ndarray) -> np.ndarray:
@@ -27,6 +28,6 @@ class DepthPro:
         with torch.no_grad():
             outputs = self.model(**inputs)
         post = self.processor.post_process_depth_estimation(outputs, target_sizes=[(H, W)])[0]
-        fov  = post.get("field_of_view")
+        fov  = post.get("field_of_view")             # only DepthPro estimates it
         self.last_fov_deg = None if fov is None else float(fov)
         return post["predicted_depth"].float().cpu().numpy()

@@ -1,4 +1,4 @@
-"""T2 depth accuracy: DepthPro against known distances.
+"""T2 depth accuracy: the depth model against known distances.
 
 Photograph obstacles straight ahead, centred, at measured distances, and put
 the distance in the file name: wall_2.0m.jpg, person_3.5m.jpg, glass_1.5m.jpg.
@@ -16,7 +16,7 @@ import numpy as np
 
 from walksafe import pipeline
 from walksafe.config import CFG
-from walksafe.perception.depth import DepthPro
+from walksafe.perception.depth import DepthModel
 from walksafe.server import check_depth
 
 
@@ -25,9 +25,10 @@ def main():
     ap.add_argument("folder")
     ap.add_argument("--band", type=float, default=0.15, help="acceptable relative error")
     ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--model", default=CFG.models.depth_model_id, help="e.g. apple/DepthPro-hf to compare")
     args = ap.parse_args()
 
-    model = DepthPro(CFG.models.depth_model_id, "cuda", args.fp16)
+    model = DepthModel(args.model, "cuda", args.fp16)
     rows = []
     for path in sorted(Path(args.folder).iterdir()):
         known = re.search(r"_(\d+(?:\.\d+)?)m\b", path.stem)

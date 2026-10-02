@@ -111,7 +111,7 @@ def test_untracked_detection_is_still_an_agent_without_speed():
 
 
 def test_side_follows_the_image_and_is_never_mirrored():
-    for lateral, side in ((-2.0, "left"), (0.0, "ahead"), (2.0, "right")):
+    for lateral, side in ((-1.2, "left"), (0.0, "ahead"), (1.2, "right")):    # inside a 45-degree view
         depth, box = scene(4.0, lateral)
         assert measure([box], depth, 0.0, {})[0].side == side
 

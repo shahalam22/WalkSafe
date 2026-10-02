@@ -13,14 +13,14 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
     # Imported here so the rest of the package (and the tests) never needs torch.
     import torch
 
-    from walksafe.perception.depth import DepthPro
+    from walksafe.perception.depth import DepthModel
     from walksafe.perception.detection import YoloTracker
     from walksafe.perception.flow import RaftSmall
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("Device: %s", device)
     models = Models(
-        depth    = DepthPro(cfg.depth_model_id, device, cfg.depth_fp16),
+        depth    = DepthModel(cfg.depth_model_id, device, cfg.depth_fp16),
         flow     = RaftSmall(device, cfg.flow_scale),
         detector = YoloTracker(cfg),
     )

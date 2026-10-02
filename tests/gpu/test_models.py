@@ -42,8 +42,8 @@ def test_depth_is_metric_and_plausible(models, street):
 
 
 def test_fp16_depth_stays_close_to_fp32(models, street):
-    from walksafe.perception.depth import DepthPro
-    half = DepthPro(CFG.models.depth_model_id, "cuda", fp16=True).estimate(street)
+    from walksafe.perception.depth import DepthModel
+    half = DepthModel(CFG.models.depth_model_id, "cuda", fp16=True).estimate(street)
     full = models.depth.estimate(street)
     assert abs(np.median(half) / np.median(full) - 1) < 0.05
 

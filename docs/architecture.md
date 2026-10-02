@@ -35,7 +35,7 @@ flowchart LR
     subgraph SERVER["Colab server (walksafe)"]
         SRV["server.py<br/>/api/frame"]
         PIPE["pipeline.py"]
-        PER["perception/<br/>DepthPro, YOLO + ByteTrack, RAFT"]
+        PER["perception/<br/>Depth Anything V2 Metric, YOLO + ByteTrack, RAFT"]
         INT["interpretation/<br/>agents, ego, openings, quality"]
         DEC["decision.py<br/>rules R1 to R10"]
         LOG["storage/writer.py<br/>bounded queue"]
@@ -133,3 +133,4 @@ server came back at a new address.
 | Overheating warnings (FR-20) | Not available | Browsers do not report temperature (platform limitation). |
 | ER schema (§4) | Adds `user.shoulder_width_m`; `decision` keyed by `(session_id, source, sequence)` | FR-8 needs the width; phone and server decisions can share a frame number. Both approved, and the SRS table is updated. |
 | Agent motion classes | `crossing` carries its direction: `crossing_left` / `crossing_right` | So the spoken detail can say which way. Approved. |
+| Depth model DepthPro (§7.2) | Depth Anything V2 Metric Small (outdoor) by default; DepthPro still selectable | DepthPro measured about 6.6 s a frame on a Colab T4, so every server answer would be too old to speak. Approved. |

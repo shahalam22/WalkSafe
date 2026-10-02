@@ -17,7 +17,9 @@ from dataclasses import asdict, dataclass, field, replace
 @dataclass(frozen=True)
 class Profile:
     """One user's setup. These are the defaults until the phone sends its own (FR-23)."""
-    camera_fov_deg:     float = 70.0
+    # Horizontal angle of a phone held upright: DepthPro estimated 41-46 degrees on the
+    # first test phone. Replaced by the model's own estimate in setup when it has one.
+    camera_fov_deg:     float = 45.0
     shoulder_width_m:   float = 0.45
     clearance_margin_m: float = 0.30
     depth_scale:        float = 1.0
@@ -32,7 +34,10 @@ class Profile:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    depth_model_id:  str   = "apple/DepthPro-hf"
+    # DepthPro ("apple/DepthPro-hf") took about 6.6 s a frame on a Colab T4, far too slow
+    # for guidance; Depth Anything V2 Metric (outdoor, up to 80 m) is much smaller.
+    # "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf" suits indoor testing.
+    depth_model_id:  str   = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf"
     yolo_model:      str   = "yolov8n.pt"
     yolo_conf:       float = 0.35
     # COCO ids for the agents FR-3 names: person, bicycle, car, motorcycle, bus, truck.
@@ -163,7 +168,7 @@ class PhoneConfig:
     blur_min:             float = 30      # variance of the Laplacian at 96x72, untuned
     stale_after_ms:       int   = 2000    # NFR-2
     request_timeout_ms:   int   = 5000
-    setup_timeout_ms:     int   = 30000   # the depth check runs DepthPro on demand
+    setup_timeout_ms:     int   = 30000   # setup checks run the depth model on demand
     max_messages_per_min: int   = 15      # NFR-13
     step_min_interval_ms: int   = 2000    # SRS UC-4: steps no more often than every 2 s
     # Expansion check (FR-16): block matching on the 96x72 copy. All untuned.
