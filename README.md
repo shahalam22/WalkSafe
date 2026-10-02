@@ -304,6 +304,37 @@ Open [run_on_colab.ipynb](run_on_colab.ipynb) in Colab and run its three cells
 
 ---
 
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest                       # CPU only; no GPU, no model downloads (fake models)
+node --test "tests/js/*.test.js"
+```
+
+| Test (SRS §8.2) | Where | Runs on |
+|---|---|---|
+| T1 direction | `tests/test_ego.py` (mirrored flow), `tests/js/setup.test.js` (reversed result blocks setup) | CPU, Node |
+| T2 depth accuracy | `scripts/eval_depth.py` on photos at known distances; `tests/gpu` | GPU |
+| T3 detection and tracking | `scripts/eval_tracking.py` on a recorded clip; `tests/gpu` | GPU |
+| T4 frame-rate independence | `tests/test_agents.py`, `tests/test_ego.py` at 1.5, 5 and 15 fps | CPU |
+| T5 openings | `tests/test_openings.py` | CPU |
+| T6 decision rules | `tests/test_decision.py`, with `hypothesis` properties | CPU |
+| T7 phone stop wins | `tests/js/guidance.test.js` | Node |
+| T8 stale guidance | `tests/js/guidance.test.js`, `tests/test_server.py` | Node, CPU |
+| T9 speaking rules | `tests/js/guidance.test.js` | Node |
+| T10 capability levels | `tests/js/capability.test.js` | Node |
+| T11 server loss | `tests/js/capability.test.js`, `tests/js/api.test.js` | Node |
+| T12 accessibility | [docs/manual-checklist.md](docs/manual-checklist.md) | Phone |
+| T13 logging and privacy | `tests/test_writer.py`, `tests/test_schema.py`, `tests/test_server.py` | CPU |
+| T14 two hours | `scripts/soak.py` | GPU |
+
+The GPU tests and scripts run from the notebook's optional cells; `scripts/benchmark.py`
+measures decisions per second (NFR-4), with `--fp16` and `--flow-scale` to compare.
+
+---
+
 ## Acknowledgements
 
 - [Apple DepthPro](https://huggingface.co/apple/DepthPro-hf) — monocular metric depth estimation

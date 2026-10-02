@@ -11,7 +11,9 @@ import { runSetup, SetupRejected } from "./setup.js";
 import { Speaker } from "./speech.js";
 
 const $ = (id) => document.getElementById(id);
-const serverOverride = new URLSearchParams(location.search).get("server");
+const params = new URLSearchParams(location.search);
+const serverOverride = params.get("server");
+const debug = params.has("debug");      // shows the on-phone check rate, for measuring NFR-3
 const api = new Api("", { timeoutMs: CONFIG.request_timeout_ms });
 const locateServer = async () => { api.base = await findServer({ override: serverOverride }); };
 const speaker = new Speaker();
@@ -29,6 +31,7 @@ let capability = null;
 let expansion = null;
 let events = [];
 let phoneStops = 0;
+let checks = { count: 0, since: 0 };
 let timers = [];
 
 function load(key, defaults) {
@@ -227,12 +230,24 @@ function checkLoop() {
       }
       if (closing.stop) guidance.phoneStop();
       else guidance.phoneClear();
+      if (debug) showRate(closing);
     }
   } catch (e) {
     console.error(e);
     capability.report("check_error", true, "L3", "the obstacle check failed", 0);
   }
   setTimeout(checkLoop, 1000 / CONFIG.capture_fps);
+}
+
+function showRate(closing) {
+  const now = clockMs();
+  checks.count++;
+  if (now - checks.since >= 1000) {
+    const ttc = closing.ttc === null || closing.ttc === Infinity ? "none" : `${closing.ttc.toFixed(1)} s`;
+    $("debug").textContent = `checks ${(checks.count * 1000 / (now - checks.since)).toFixed(1)}/s, ` +
+      `ttc ${ttc}, points ${closing.points}, level ${capability.level}`;
+    checks = { count: 0, since: now };
+  }
 }
 
 async function connect() {
