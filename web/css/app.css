@@ -77,6 +77,12 @@ code { font-size: 0.9em; background: var(--surface-2); padding: 1px 5px; border-
 .ok { color: var(--ok); }
 .spacer { flex: 1; }
 .brand { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.25em; }
+/* The logo, drawn in the text colour so it shows in light and dark mode. */
+.logo {
+  display: block; width: 88px; height: 88px; margin: 0 auto; background: var(--ink);
+  -webkit-mask: url(../icons/logo.svg) center / contain no-repeat;
+  mask: url(../icons/logo.svg) center / contain no-repeat;
+}
 .brand-sm { font-weight: 700; font-size: 1.1rem; }
 
 .screen { min-height: 100dvh; }
