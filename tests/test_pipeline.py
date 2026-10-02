@@ -28,10 +28,46 @@ def test_frame_is_resized_to_a_multiple_of_14():
 
 
 def test_depth_is_refreshed_by_age_not_frame_count():
+    from dataclasses import replace
+
+    from walksafe.config import CFG
+    blocking = replace(CFG, models=replace(CFG.models, depth_in_background=False))
     depth = FakeDepth()
     m = fake_models(depth=depth)
-    run(m, session(m), [0.0, 0.2, 0.39, 0.5, 0.6, 0.95])
+    s = session(m)
+    for i, t in enumerate([0.0, 0.2, 0.39, 0.5, 0.6, 0.95]):
+        pipeline.process(m, s, frame(i), t, blocking)
     assert depth.calls == 3                         # at 0.0, 0.5 and 0.95 s
+
+
+def test_slow_depth_runs_in_the_background_and_frames_do_not_wait():
+    import threading
+    import time
+
+    class SlowDepth(FakeDepth):
+        def __init__(self):
+            super().__init__(4.0)
+            self.release = threading.Event()
+
+        def estimate(self, frame_bgr):
+            if self.calls >= 1:                     # every refresh after the first is slow
+                self.release.wait(5)
+                self.metres = 6.0
+            return super().estimate(frame_bgr)
+
+    depth = SlowDepth()
+    m = fake_models(depth=depth)
+    s = session(m)
+    first = pipeline.process(m, s, frame(0), 0.0)               # the first frame waits for depth
+    t0 = time.perf_counter()
+    later = pipeline.process(m, s, frame(1), 1.0)               # starts a refresh, does not wait
+    assert time.perf_counter() - t0 < 1.0
+    assert float(later.depth_arr.mean()) == 4.0 and later.depth_age_s == 1.0
+    depth.release.set()
+    s.depth_job.result(timeout=5)
+    newest = pipeline.process(m, s, frame(2), 1.2)
+    assert float(newest.depth_arr.mean()) == 6.0 and newest.depth_age_s == 0.2
+    assert first.depth_age_s == 0.0
 
 
 def test_depth_scale_from_setup_is_applied():

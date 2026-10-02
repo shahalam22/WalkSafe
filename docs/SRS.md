@@ -1001,10 +1001,10 @@ Nothing is trained or fine-tuned. All models are pretrained and used as they are
 | Server, motion | **RAFT-Small** | Reasonable accuracy for the cost; used for the user's walking speed in the session summaries | Farnebäck is cheaper but too noisy |
 | Phone | **No model — sparse optical flow expansion** | Must run at 10 frames per second on an ordinary phone. Measuring how fast the image spreads outward gives a collision warning without needing depth or scale, using a few hundred points of arithmetic and no model file | A small quantized depth model would work but needs a download, a GPU delegate, and support that varies by device |
 
-*Implementation note (October 2026): DepthPro took about 6.6 s per frame on a Colab T4, so
-every server answer arrived after the 2 s limit (NFR-2). The server therefore uses Depth
-Anything V2 Metric (Small, outdoor), which also gives depth in metres; DepthPro remains
-selectable in the configuration (NFR-16).*
+*Implementation note (October 2026): DepthPro took about 6.6 s per frame on a Colab T4. Depth
+Anything V2 Metric was tried as a faster replacement but measured distances badly, so DepthPro
+stays and runs in the background: each frame is answered with the latest depth map, which can
+be several seconds old rather than the 0.4 s of §7.3.*
 
 The last row is the important one. The phone does not need to know how far away something is to know it is about to hit you. Expansion rate alone gives that, which is why the phone side needs no neural network at all.
 

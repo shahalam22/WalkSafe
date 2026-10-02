@@ -1,4 +1,5 @@
 import logging
+import threading
 
 import cv2
 import numpy as np
@@ -19,8 +20,13 @@ class DepthModel:
         self.processor = AutoImageProcessor.from_pretrained(model_id)
         self.model     = AutoModelForDepthEstimation.from_pretrained(model_id).to(device, self.dtype).eval()
         self.last_fov_deg: float | None = None
+        self._lock = threading.Lock()           # background refreshes and setup checks share it
 
     def estimate(self, frame_bgr: np.ndarray) -> np.ndarray:
+        with self._lock:
+            return self._estimate(frame_bgr)
+
+    def _estimate(self, frame_bgr: np.ndarray) -> np.ndarray:
         H, W   = frame_bgr.shape[:2]
         pil    = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         inputs = self.processor(images=[pil], return_tensors="pt")

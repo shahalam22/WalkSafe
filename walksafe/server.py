@@ -1,4 +1,5 @@
 """HTTP API for the phone page, and the page itself."""
+import base64
 import logging
 import os
 import secrets
@@ -92,8 +93,9 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         p = req.profile
         if not p.consent_send_images:
             raise HTTPException(403, "consent_required")
-        # Walking needs a passed depth check and direction test (FR-23, NFR-6).
-        if req.purpose == "walk" and not (p.depth_check_passed and p.direction_test_passed):
+        # With require_setup, walking needs a passed depth check and direction test (FR-23, NFR-6).
+        if cfg.server.require_setup and req.purpose == "walk" \
+                and not (p.depth_check_passed and p.direction_test_passed):
             raise HTTPException(403, "setup_incomplete")
         profile = Profile(p.camera_fov_deg, p.shoulder_width_m, p.clearance_margin_m, p.depth_scale)
         s = sessions.add(Session(models.detector.new_tracker(), profile,
@@ -201,9 +203,10 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
     async def frame(request: Request):
         started = time.perf_counter()
         f, data = await read_form(request, session_id=str, seq=int, capture_ts=float)
-        return await run_in_threadpool(handle_frame, f["session_id"], f["seq"], f["capture_ts"], data, started)
+        panel   = request.query_params.get("panel") == "1"
+        return await run_in_threadpool(handle_frame, f["session_id"], f["seq"], f["capture_ts"], data, started, panel)
 
-    def handle_frame(session_id, seq, capture_ts, data, started):
+    def handle_frame(session_id, seq, capture_ts, data, started, panel=False):
         now = clock()
         for old in sessions.expire(now):
             log.info("Session %s expired", old.session_id[:8])
@@ -238,11 +241,13 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         if cfg.ui.diagnostic_view:
             s.panel = diagnostic.render_jpeg(r, cfg)
         d = r.decision
-        return {
+        extra = {"panel_jpeg": base64.b64encode(diagnostic.render_jpeg(r, cfg)).decode()} if panel else {}
+        return {**extra,
             "seq": seq, "capture_ts": capture_ts,
             "command": d.command, "detail": d.detail, "phrase": r.phrase, "reason": d.reason,
             "confidence": d.confidence, "level": r.level, "ego_action": r.ego.action,
             "server_ms": round((time.perf_counter() - started) * 1000, 1), "timings": r.timings,
+            "depth_age_s": r.depth_age_s,
         }
 
     # The page asks where the server is (FR-22); here it is the page's own origin.

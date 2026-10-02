@@ -17,7 +17,7 @@ const debug = params.has("debug");      // shows the on-phone check rate, for me
 const api = new Api("", { timeoutMs: CONFIG.request_timeout_ms });
 const locateServer = async () => { api.base = await findServer({ override: serverOverride }); };
 const speaker = new Speaker();
-const settings = load("walksafe.settings", { muted: false, verbosity: "normal", rate: 1 });
+const settings = load("walksafe.settings", { muted: false, verbosity: "normal", rate: 1, views: true });
 let profile = load("walksafe.profile", null);
 
 let running = false;
@@ -61,6 +61,9 @@ function applySettings() {
   $("mute").textContent = settings.muted ? "Unmute guidance" : "Mute guidance";
   $("verbosity").value = settings.verbosity;
   $("rate").value = String(settings.rate);
+  $("views-on").checked = settings.views;
+  document.body.classList.toggle("views-on", settings.views);
+  api.panel = settings.views;
 }
 
 // Announcements are never muted: silence must not be the only sign of a fault (NFR-7).
@@ -87,13 +90,23 @@ async function flushEvents() {
   }
 }
 
-// The setup is needed before the first walk, and again until it passes.
-const setUp = () => typeof profile?.consent_send_images === "boolean"
-  && (!profile.consent_send_images || (profile.depth_check_passed && profile.direction_test_passed));
+// Consent is the only question before the first walk; the full setup is optional.
+async function askConsent() {
+  $("toggle").hidden = true;
+  const answer = await ask(
+    "WalkSafe sends camera images to its server to analyse the street; images are never stored. " +
+    "Allow this? Without it, WalkSafe only warns when something is about to hit you.",
+    [{ key: "yes", label: "Allow" }, { key: "no", label: "Phone only" }]);
+  $("setup").hidden = true;
+  $("toggle").hidden = false;
+  profile = { ...profile, user_id: profile?.user_id ?? crypto.randomUUID(),
+              phone_model: navigator.userAgent.slice(0, 128), consent_send_images: answer === "yes" };
+  save("walksafe.profile", profile);
+}
 
 async function start() {
   speaker.unlock();
-  if (!setUp()) return setup();
+  if (typeof profile?.consent_send_images !== "boolean") await askConsent();
   running = true;
   $("toggle").textContent = "Stop guidance";
   if (!(await openCameraOrSay())) {
@@ -133,7 +146,6 @@ async function openCameraOrSay() {
   try {
     stream = await openCamera($("camera"));
     grabber = new FrameGrabber($("camera"), CONFIG);
-    $("camera").hidden = false;
     return true;
   } catch {
     announce("Camera not available. Guidance has not started.", { urgent: true });
@@ -161,7 +173,6 @@ async function setup() {
     announce(`Setup did not finish: ${describeError(e)}. Press the large button to try again.`, { urgent: true });
   } finally {
     closeCamera(stream);
-    $("camera").hidden = true;
     $("setup").hidden = true;
     $("toggle").hidden = false;
     $("toggle").focus();
@@ -222,7 +233,6 @@ async function stop(reason = "user") {
   if (sessionId) api.endSession(sessionId, reason).catch(() => {});
   sessionId = null;
   closeCamera(stream);
-  $("camera").hidden = true;
   wakeLock?.release();
   wakeLock = null;
 }
@@ -250,6 +260,13 @@ function checkLoop() {
     capability.report("check_error", true, "L3", "the obstacle check failed", 0);
   }
   setTimeout(checkLoop, 1000 / CONFIG.capture_fps);
+}
+
+// The command under the panels, and the annotated panel itself, for a sighted helper.
+function showResult(r) {
+  if (r.panel_jpeg) $("annotated").src = `data:image/jpeg;base64,${r.panel_jpeg}`;
+  const detail = r.detail ? ` - ${r.detail}` : "";
+  $("command").textContent = `${r.phrase}${detail}  (${r.level}, depth ${r.depth_age_s} s old, ${r.server_ms} ms)`;
 }
 
 function showRate(closing) {
@@ -280,6 +297,7 @@ async function connect() {
       onResult: (r) => {
         // An answer too old to speak counts as no answer, so the level drops and says why.
         if (guidance.serverResult(r) !== "stale") capability.serverAnswered(r.level);
+        showResult(r);
       },
       onError: () => {},
     });
@@ -303,9 +321,13 @@ $("toggle").addEventListener("click", () => (running ? stop() : start()));
 
 $("redo-setup").addEventListener("click", () => {
   if (running) stop();
-  profile = { user_id: profile?.user_id ?? crypto.randomUUID() };
-  save("walksafe.profile", profile);     // until the new setup passes, guidance stays blocked
   setup();
+});
+
+$("views-on").addEventListener("change", (e) => {
+  settings.views = e.target.checked;
+  save("walksafe.settings", settings);
+  applySettings();
 });
 
 $("mute").addEventListener("click", () => {

@@ -34,15 +34,18 @@ class Profile:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    # DepthPro ("apple/DepthPro-hf") took about 6.6 s a frame on a Colab T4, far too slow
-    # for guidance; Depth Anything V2 Metric (outdoor, up to 80 m) is much smaller.
-    # "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf" suits indoor testing.
-    depth_model_id:  str   = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf"   # see DEPTH_MODELS
+    # DepthPro measures distance best of the models tried, but takes about 6.6 s a
+    # frame on a Colab T4, so it runs in the background (depth_in_background).
+    depth_model_id:  str   = "apple/DepthPro-hf"     # see DEPTH_MODELS for the alternatives
     yolo_model:      str   = "yolov8n.pt"
     yolo_conf:       float = 0.35
     # COCO ids for the agents FR-3 names: person, bicycle, car, motorcycle, bus, truck.
     agent_classes:   tuple[int, ...] = (0, 1, 2, 3, 5, 7)
-    depth_max_age_s: float = 0.4          # SRS §7.3
+    depth_max_age_s: float = 0.4          # SRS §7.3: a newer depth map is wanted after this
+    # True: frames are answered at once with the latest depth map while a new one is
+    # computed in the background, so a map can be several seconds old (it was with the
+    # prototype too). False: a frame waits for fresh depth, as SRS §7.3 intends.
+    depth_in_background: bool = True
     resize_width:    int   = 518
     # Speed options measured by scripts/benchmark.py (NFR-4).
     depth_fp16:      bool  = False
@@ -148,6 +151,9 @@ class StorageConfig:
 @dataclass(frozen=True)
 class ServerConfig:
     port:            int   = 7860
+    # The spoken setup (FR-23) is optional unless this is set; then a walking session
+    # needs a passed depth check and direction test.
+    require_setup:   bool  = False
     # The phone page is served from GitHub Pages (FR-22) as well as from the server itself.
     allowed_origins: tuple[str, ...] = ("https://shahalam22.github.io",)
     session_idle_s:  float = 300.0

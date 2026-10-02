@@ -1,5 +1,6 @@
 import threading
 import uuid
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -19,6 +20,7 @@ class Session:
     prev_ts:       float             = 0.0
     depth_arr:     np.ndarray | None = None
     depth_ts:      float             = 0.0
+    depth_job:     Future | None     = None     # a depth map being computed in the background
     ego:           Ego               = STILL
     speed_history: list[float]       = field(default_factory=list)
     frame_idx:     int               = 0

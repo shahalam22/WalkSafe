@@ -187,9 +187,16 @@ def test_events_are_accepted_for_a_live_session(client):
     assert client.post("/api/event", json=bad).status_code == 422
 
 
-def test_walking_needs_setup_to_have_passed(client):
+def test_setup_is_optional_unless_required(client, clock):
+    from dataclasses import replace
+
+    from walksafe.config import CFG
+    unset = {**PROFILE, "depth_check_passed": False, "direction_test_passed": False}
+    assert client.post("/api/session", json={"profile": unset}).status_code == 200
+    strict = TestClient(create_app(fake_models(), clock=clock,
+                                   cfg=replace(CFG, server=replace(CFG.server, require_setup=True))))
     for flags in ({"depth_check_passed": False}, {"direction_test_passed": False}):
-        r = client.post("/api/session", json={"profile": {**PROFILE, **flags}})
+        r = strict.post("/api/session", json={"profile": {**PROFILE, **flags}})
         assert r.status_code == 403 and r.json()["detail"] == "setup_incomplete"
     setup = client.post("/api/session", json={"purpose": "setup", "profile": {"consent_send_images": True}})
     assert setup.status_code == 200
@@ -311,3 +318,13 @@ def test_direction_check_returns_a_verdict_in_a_setup_session(client):
     assert body["verdict"] in ("left", "right", "unclear") and set(body) == {"verdict", "lateral_m", "forward_m", "turn_deg"}
     walk = start(client)
     assert client.post("/api/setup/direction", data={"session_id": walk}, files=files).status_code == 409
+
+
+def test_annotated_panel_comes_back_when_asked(client):
+    import base64
+    sid = start(client)
+    plain = send(client, sid, 1).json()
+    assert "panel_jpeg" not in plain and "depth_age_s" in plain
+    r = client.post("/api/frame?panel=1", data={"session_id": sid, "seq": 2, "capture_ts": 1_759_400_001_000.0},
+                    files={"image": ("f.jpg", jpeg(2), "image/jpeg")})
+    assert base64.b64decode(r.json()["panel_jpeg"])[:2] == b"\xff\xd8"

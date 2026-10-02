@@ -15,9 +15,10 @@ The requirements are in [docs/SRS.md](docs/SRS.md); how they map to code and tes
 
 **The models measure, the rules decide.** Three pretrained models measure the scene:
 
-- **Depth Anything V2 Metric (Small)**: depth in metres for every pixel. The SRS chose
-  DepthPro, but it took about 6.6 s a frame on a Colab T4, far too slow for guidance; it
-  is still one setting away (`models.depth_model_id: apple/DepthPro-hf`)
+- **DepthPro**: depth in metres for every pixel. It measured distance best of the models
+  tried, but takes about 6.6 s a frame on a Colab T4, so it runs in the background: each
+  frame is answered at once with the latest depth map while a new one is computed. Depth
+  Anything V2 Metric (faster, less accurate) is one setting away (`WALKSAFE_DEPTH_MODEL`)
 - **YOLOv8n + ByteTrack**: people, cyclists and vehicles, with identities kept across frames
 - **RAFT-Small**: optical flow, from which the user's own movement is worked out
 
@@ -125,8 +126,8 @@ The repository holds only the page and the server's address; the token never app
 
 ### On the phone
 
-1. Open the fixed address and press **Start guidance**, the large button that fills most
-   of the screen. The first time, this runs the spoken setup.
+1. Open the address and press **Start guidance**. The first time, WalkSafe asks once for
+   consent to send camera images, then starts.
 2. Hold the phone at chest height, camera pointing ahead, and keep the screen on.
 3. WalkSafe plays a short sound and speaks only when the command changes. A `stop`
    interrupts anything being said and also vibrates.
@@ -142,9 +143,14 @@ and no server command is spoken until the scene stops closing in. The page keeps
 request in flight and always sends the newest frame. Results older than 2 s, or older than
 one already handled, are dropped.
 
-### First-time setup (FR-23)
+With **Show camera views** on (the default), the page shows the live camera and the
+annotated panel (boxes, depth, flow, openings) side by side, with the command and its detail
+written underneath, as the prototype did. Turn it off for a single large button.
 
-Spoken, answered with buttons, and usable without sight:
+### Optional setup (FR-23)
+
+**Run setup (optional)** in the settings calibrates WalkSafe to the user and the phone. It is
+spoken, answered with buttons, and usable without sight:
 
 1. **Limits.** WalkSafe does not replace a cane or guide dog and cannot detect kerbs or
    steps. The user confirms they understand.
@@ -162,8 +168,9 @@ Spoken, answered with buttons, and usable without sight:
    right are reversed, and WalkSafe refuses to run (NFR-6).
 6. **Shoulder width** (narrow, average, broad), used to judge openings.
 
-The profile is kept in the browser's storage and sent when a session starts. The server
-refuses a walking session unless both checks passed. **Run setup again** is in the settings.
+The profile is kept in the browser's storage and sent when a session starts. Setup is
+optional by default; with `server.require_setup: true` the server refuses a walking session
+unless both checks passed.
 
 ### Capability levels
 

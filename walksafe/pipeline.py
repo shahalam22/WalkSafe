@@ -1,5 +1,7 @@
 """One frame through perception, interpretation and decision."""
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 
 import cv2
@@ -32,6 +34,7 @@ class FrameResult:
     ego:       Ego
     decision:  Decision
     level:     str            # "L0", or "L1" when visibility or confidence is poor
+    depth_age_s: float = 0.0  # how old the depth map behind this result is
     timings:   dict[str, float] = field(default_factory=dict)    # milliseconds per stage
 
     @property
@@ -62,10 +65,7 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
         timer.lap("quality")
 
         prev_depth = s.depth_arr
-        if s.depth_arr is None or capture_ts - s.depth_ts > cfg.models.depth_max_age_s:
-            s.depth_arr = models.depth.estimate(frame) * s.profile.depth_scale
-            s.depth_ts  = capture_ts
-        depth = s.depth_arr
+        depth      = latest_depth(models, s, frame, capture_ts, cfg)
         timer.lap("depth")
 
         boxes  = models.detector.track(frame, s.tracker)
@@ -91,7 +91,34 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
             d = Decision(d.command, d.detail, f"{d.reason} | confidence {conf:.2f}: {why}", d.confidence)
         level = "L1" if conf < cfg.decision.confidence_low else "L0"
         return FrameResult(frame, capture_ts, q, depth, flow, agents, openings, s.ego, d, level,
-                           timer.lap("rules"))
+                           round(capture_ts - s.depth_ts, 2), timer.lap("rules"))
+
+
+def latest_depth(models: Models, s: Session, frame: np.ndarray, ts: float, cfg: Config = CFG) -> np.ndarray:
+    """The depth map to use for this frame, refreshing it when it is older than the cap."""
+    if s.depth_job is not None and s.depth_job.done():
+        s.depth_arr, s.depth_ts = s.depth_job.result()      # a fault surfaces here
+        s.depth_job = None
+    stale = s.depth_arr is None or ts - s.depth_ts > cfg.models.depth_max_age_s
+    if stale and (s.depth_arr is None or not cfg.models.depth_in_background):
+        s.depth_arr, s.depth_ts = models.depth.estimate(frame) * s.profile.depth_scale, ts
+    elif stale and s.depth_job is None:
+        scale, snapshot = s.profile.depth_scale, frame.copy()
+        s.depth_job = in_background(lambda: (models.depth.estimate(snapshot) * scale, ts))
+    return s.depth_arr
+
+
+def in_background(fn) -> Future:
+    future = Future()
+
+    def run():
+        try:
+            future.set_result(fn())
+        except Exception as e:                  # handed to the next frame, which reports it
+            future.set_exception(e)
+
+    threading.Thread(target=run, name="depth", daemon=True).start()
+    return future
 
 
 class _Timer:

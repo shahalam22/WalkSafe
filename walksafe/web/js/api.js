@@ -13,6 +13,7 @@ export class Api {
     this.base = base;
     this.fetch = fetchFn;
     this.timeoutMs = timeoutMs;
+    this.panel = false;          // ask the server for the annotated panel with each answer
   }
 
   async request(path, init, timeoutMs = this.timeoutMs) {
@@ -71,7 +72,7 @@ export class Api {
     form.append("seq", String(seq));
     form.append("capture_ts", String(captureTs));
     form.append("image", blob, "frame.jpg");
-    return this.request("/api/frame", { method: "POST", body: form });
+    return this.request(this.panel ? "/api/frame?panel=1" : "/api/frame", { method: "POST", body: form });
   }
 }
 
