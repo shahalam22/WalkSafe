@@ -9,6 +9,11 @@ implements it, the test that checks it, and its status. Status values:
 - **Partial**: part of it is implemented; the rest is explained.
 - **Platform limitation**: the browser or Colab cannot provide it; see SRS "Platform Limitations".
 
+**Mode.** The phone page has two modes (decided 2 Oct 2026). **Full safety** applies everything
+below. **Simple**, the default while testing, works like the prototype: it does not drop late
+answers (FR-17, NFR-2), keeps no capability levels (FR-18, FR-19, NFR-7) and runs no stop check on
+the phone (FR-16, NFR-1, NFR-3). Those rows are met only in Full safety mode.
+
 Paths are relative to the repository root. `tests/js/*` run with `node --test`; everything
 else under `tests/` runs with `pytest` on a CPU, apart from `tests/gpu`.
 

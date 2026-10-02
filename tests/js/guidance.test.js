@@ -149,3 +149,14 @@ test("muting silences guidance; the current command is spoken again on unmute", 
   assert.equal(server("yield"), "spoken");
   assert.equal(said.length, 1);
 });
+
+test("simple mode: a late answer is still spoken", () => {
+  const out = [];
+  const g = new Guidance({
+    output: { earcon: () => 0, speak: (t) => out.push(t), vibrate: () => {} },
+    now: () => 100_000, cfg: { ...CFG, stale_after_ms: Infinity },
+  });
+  assert.equal(g.serverResult({ seq: 1, capture_ts: 90_000, command: "slow_down", phrase: "Slow down", detail: "" }),
+               "spoken");
+  assert.deepEqual(out, ["Slow down"]);
+});

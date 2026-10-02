@@ -17,7 +17,16 @@ const debug = params.has("debug");      // shows the on-phone check rate, for me
 const api = new Api("", { timeoutMs: CONFIG.request_timeout_ms });
 const locateServer = async () => { api.base = await findServer({ override: serverOverride }); };
 const speaker = new Speaker();
-const settings = load("walksafe.settings", { muted: false, verbosity: "normal", rate: 1, views: true });
+const settings = load("walksafe.settings",
+                      { muted: false, verbosity: "normal", rate: 1, views: true, mode: "simple" });
+
+// Simple mode works like the prototype: every answer is shown and spoken when the
+// command changes, however late it arrives, with no capability levels and no
+// stop check on the phone. Full safety mode applies all of SRS §2.2.
+const simple = () => settings.mode === "simple";
+const NO_LEVELS = { level: "L0", report() {}, requestSent() {}, serverAnswered() {}, checkRan() {},
+                    battery() {}, end() {}, tick() {} };
+let lastAnswerAt = 0;
 let profile = load("walksafe.profile", null);
 
 let running = false;
@@ -62,6 +71,7 @@ function applySettings() {
   $("verbosity").value = settings.verbosity;
   $("rate").value = String(settings.rate);
   $("views-on").checked = settings.views;
+  $("mode").value = settings.mode;
   document.body.classList.toggle("views-on", settings.views);
   api.panel = settings.views;
 }
@@ -116,13 +126,14 @@ async function start() {
   }
   expansion = new ExpansionCheck(CONFIG);
   guidance = new Guidance({
-    output: speaker, now: clockMs, cfg: CONFIG,
+    output: speaker, now: clockMs, cfg: simple() ? { ...CONFIG, stale_after_ms: Infinity } : CONFIG,
     onDelivery: (d) => { if (d.outcome !== "phone_stop") queueEvent({ type: "delivery", ...d }); },
   });
-  capability = new Capability({
+  capability = simple() ? NO_LEVELS : new Capability({
     announce, now: clockMs, cfg: CONFIG,
     onEvent: (e) => { queueEvent(e); guidance.level = capability.level; },
   });
+  lastAnswerAt = clockMs();
   applySettings();
   await keepScreenOn();
   announce("Guidance starting.");
@@ -139,6 +150,11 @@ async function start() {
   timers = [
     setInterval(() => capability.tick(), 250),
     setInterval(flushEvents, CONFIG.event_flush_ms),
+    setInterval(() => {
+      if (simple() && clockMs() - lastAnswerAt > CONFIG.server_silent_ms) {
+        $("status").textContent = "Waiting for the server...";
+      }
+    }, 1000),
   ];
 }
 
@@ -227,6 +243,7 @@ async function stop(reason = "user") {
   if (!running) return;
   running = false;
   capability.end(reason === "user" ? "guidance ended by you" : reason);
+  if (simple()) announce("Guidance stopped.", { urgent: true });
   timers.forEach(clearInterval);
   $("toggle").textContent = "Start guidance";
   await flushEvents();
@@ -245,6 +262,7 @@ function checkLoop() {
     if (grabber.ready()) {
       const g = grabber.gray();
       quality = checkFrame(g.data, g.width, g.height, CONFIG);
+      if (simple()) return setTimeout(checkLoop, 1000 / CONFIG.capture_fps);
       capability.report("visibility", !quality.ok, "L1", `poor visibility, ${quality.cause}`);
       const closing = expansion.update(g.data, g.width, g.height, g.ts);
       capability.checkRan(closing);
@@ -264,6 +282,8 @@ function checkLoop() {
 
 // The command under the panels, and the annotated panel itself, for a sighted helper.
 function showResult(r) {
+  lastAnswerAt = clockMs();
+  if (simple()) $("status").textContent = "Guidance running.";
   if (r.panel_jpeg) $("annotated").src = `data:image/jpeg;base64,${r.panel_jpeg}`;
   const detail = r.detail ? ` - ${r.detail}` : "";
   const depth = r.depth_age_s === null ? "no depth yet" : `depth ${r.depth_age_s} s old`;
@@ -295,7 +315,7 @@ async function connect() {
     await uploadLoop({
       api, sessionId, running: () => running,
       // Frames the phone already judged unusable are not sent (FR-1).
-      grab: async () => (grabber.ready() && quality.ok ? grabber.jpeg() : null),
+      grab: async () => (grabber.ready() && (simple() || quality.ok) ? grabber.jpeg() : null),
       onSent: () => capability.requestSent(),
       onResult: (r) => {
         // An answer too old to speak counts as no answer, so the level drops and says why.
@@ -325,6 +345,12 @@ $("toggle").addEventListener("click", () => (running ? stop() : start()));
 $("redo-setup").addEventListener("click", () => {
   if (running) stop();
   setup();
+});
+
+$("mode").addEventListener("change", (e) => {
+  settings.mode = e.target.value;
+  save("walksafe.settings", settings);
+  if (running) speaker.speak("The new mode applies when guidance next starts.");
 });
 
 $("views-on").addEventListener("change", (e) => {

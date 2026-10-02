@@ -143,6 +143,14 @@ and no server command is spoken until the scene stops closing in. The page keeps
 request in flight and always sends the newest frame. Results older than 2 s, or older than
 one already handled, are dropped.
 
+**Mode** (in the settings):
+
+- **Simple** (default): works like the prototype. Every answer is shown and spoken when
+  the command changes, however late it arrives; there are no capability levels and no stop
+  check on the phone, and every frame is sent.
+- **Full safety**: everything in SRS §2.2. Late answers are dropped, levels L0 to L4 are
+  announced, and the phone's own stop check overrides the server.
+
 With **Show camera views** on (the default), the page shows the live camera and the
 annotated panel (boxes, depth, flow, openings) side by side, with the command and its detail
 written underneath, as the prototype did. Turn it off for a single large button.
