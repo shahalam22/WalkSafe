@@ -60,9 +60,12 @@ def render(r, cfg: Config = CFG):
     return cv2.cvtColor(np.vstack([panel, strip]), cv2.COLOR_BGR2RGB)
 
 
-def render_jpeg(r, cfg: Config = CFG) -> bytes:
-    """The panel as JPEG bytes, kept in memory for the dashboard's live view."""
-    return cv2.imencode(".jpg", cv2.cvtColor(render(r, cfg), cv2.COLOR_RGB2BGR))[1].tobytes()
+def render_jpeg(r, cfg: Config = CFG, width: int | None = None, quality: int = 80) -> bytes:
+    """The panel as JPEG bytes, kept in memory for the dashboard's live view or sent to the phone."""
+    img = cv2.cvtColor(render(r, cfg), cv2.COLOR_RGB2BGR)
+    if width and img.shape[1] > width:
+        img = cv2.resize(img, (width, int(img.shape[0] * width / img.shape[1])), interpolation=cv2.INTER_AREA)
+    return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])[1].tobytes()
 
 
 def depth_colormap(depth_arr, cfg: Config = CFG):

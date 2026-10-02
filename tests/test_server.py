@@ -157,7 +157,7 @@ def test_phone_page_and_its_config_are_served(client):
     assert client.get("/js/guidance.js").status_code == 200
     config = client.get("/js/config.js")
     assert config.headers["content-type"].startswith("text/javascript")
-    assert '"stale_after_ms": 2000' in config.text
+    assert '"stale_after_ms": 4000' in config.text
 
 
 def test_every_setting_the_page_reads_comes_from_config_py():

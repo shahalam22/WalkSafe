@@ -62,7 +62,8 @@ export class Capability {
 
   checkRan(result) {
     this.lastCheck = this.now();
-    this.report("expansion", !result.available, "L3", "the camera view is blocked or too plain to check");
+    this.report("expansion", !result.available, "L3", "the camera view is blocked or too plain to check",
+                this.cfg.expansion_unavailable_ms);
   }
 
   battery(level, charging) {

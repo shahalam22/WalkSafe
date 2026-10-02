@@ -241,7 +241,10 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         if cfg.ui.diagnostic_view:
             s.panel = diagnostic.render_jpeg(r, cfg)
         d = r.decision
-        extra = {"panel_jpeg": base64.b64encode(diagnostic.render_jpeg(r, cfg)).decode()} if panel else {}
+        extra = {}
+        if panel:
+            jpeg = diagnostic.render_jpeg(r, cfg, cfg.ui.phone_panel_width, cfg.ui.phone_panel_quality)
+            extra = {"panel_jpeg": base64.b64encode(jpeg).decode()}
         return {**extra,
             "seq": seq, "capture_ts": capture_ts,
             "command": d.command, "detail": d.detail, "phrase": r.phrase, "reason": d.reason,

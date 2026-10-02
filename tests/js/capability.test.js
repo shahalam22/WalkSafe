@@ -6,7 +6,7 @@ import { Capability, message } from "../../walksafe/web/js/capability.js";
 import { Guidance } from "../../walksafe/web/js/guidance.js";
 
 const CFG = {
-  server_silent_ms: 2000, announce_repeat_ms: 60000, fault_onset_ms: 1000, fault_clear_ms: 3000,
+  expansion_unavailable_ms: 3000, server_silent_ms: 2000, announce_repeat_ms: 60000, fault_onset_ms: 1000, fault_clear_ms: 3000,
   check_dead_ms: 1000, battery_warn_levels: [0.2, 0.1], battery_end_level: 0.05,
 };
 
@@ -83,6 +83,8 @@ test("T10 the server's own low confidence is L1", () => {
 test("T10 a blocked camera stops guidance (L3)", () => {
   const { cap, said, run } = setup();
   run(1000);
+  run(2000, { check: { available: false } });
+  assert.equal(cap.level, "L0");                    // briefly blind is not yet a fault
   run(2000, { check: { available: false } });
   assert.equal(cap.level, "L3");
   assert.match(said.at(-1).text, /^Guidance stopped: the camera view is blocked/);

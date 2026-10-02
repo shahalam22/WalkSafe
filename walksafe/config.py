@@ -173,7 +173,10 @@ class PhoneConfig:
     dark_max:             float = 40
     bright_min:           float = 215
     blur_min:             float = 30      # variance of the Laplacian at 96x72, untuned
-    stale_after_ms:       int   = 2000    # NFR-2
+    # NFR-2 says 2 s, but the round trip through the gradio.live tunnel alone was over
+    # 2 s in testing (2 Oct 2026), so every answer was dropped. Relaxed until a closer
+    # tunnel or server is used.
+    stale_after_ms:       int   = 4000
     request_timeout_ms:   int   = 5000
     setup_timeout_ms:     int   = 30000   # setup checks run the depth model on demand
     max_messages_per_min: int   = 15      # NFR-13
@@ -182,8 +185,8 @@ class PhoneConfig:
     expansion_block_px:     int   = 3       # half-size of the matched block (7x7)
     expansion_search_px:    int   = 4
     expansion_grid_px:      int   = 6
-    expansion_min_texture:  float = 60      # grey-level variance a block needs to be tracked
-    expansion_min_points:   int   = 20
+    expansion_min_texture:  float = 20      # grey-level variance a block needs to be tracked
+    expansion_min_points:   int   = 10      # plain indoor walls left too few at 60 / 20
     expansion_region_left:  float = 0.2     # where divergence is measured: the centre,
     expansion_region_right: float = 0.8     # above the nearby ground
     expansion_region_top:    float = 0.15
@@ -194,7 +197,8 @@ class PhoneConfig:
     stop_frames:            int   = 3
     clear_frames:           int   = 5
     # Capability levels (SRS §2.2, FR-18 to FR-20)
-    server_silent_ms:       int   = 2000
+    server_silent_ms:       int   = 5000    # longer than stale_after_ms: a slow answer is not silence
+    expansion_unavailable_ms: int = 3000    # the on-phone check must be blind this long before L3
     announce_repeat_ms:     int   = 60000
     fault_onset_ms:         int   = 1000    # a fault must last this long before the level drops
     fault_clear_ms:         int   = 3000    # and be gone this long before it recovers
@@ -222,6 +226,8 @@ class UiConfig:
     # Live fusion panel on the dashboard. Off by default: it costs server time and
     # holds the latest camera frame in memory (never on disk).
     diagnostic_view:    bool  = False
+    phone_panel_width:  int   = 300      # the panel sent to the phone is kept small: it rides on every answer
+    phone_panel_quality: int  = 55
     delay_target_ms:    int   = 1200     # NFR-2, drawn on the dashboard
 
 

@@ -267,7 +267,9 @@ function showResult(r) {
   if (r.panel_jpeg) $("annotated").src = `data:image/jpeg;base64,${r.panel_jpeg}`;
   const detail = r.detail ? ` - ${r.detail}` : "";
   const depth = r.depth_age_s === null ? "no depth yet" : `depth ${r.depth_age_s} s old`;
-  $("command").textContent = `${r.phrase}${detail}  (${r.level}, ${depth}, ${r.server_ms} ms)`;
+  const age = Math.round(clockMs() - r.capture_ts);       // capture to arrival, the real round trip
+  $("command").textContent =
+    `${r.phrase}${detail}  (${r.level}, ${depth}, server ${Math.round(r.server_ms)} ms, round trip ${age} ms)`;
 }
 
 function showRate(closing) {
