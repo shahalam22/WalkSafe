@@ -133,6 +133,7 @@ async function openCameraOrSay() {
   try {
     stream = await openCamera($("camera"));
     grabber = new FrameGrabber($("camera"), CONFIG);
+    $("camera").hidden = false;
     return true;
   } catch {
     announce("Camera not available. Guidance has not started.", { urgent: true });
@@ -160,6 +161,7 @@ async function setup() {
     announce(`Setup did not finish: ${describeError(e)}. Press the large button to try again.`, { urgent: true });
   } finally {
     closeCamera(stream);
+    $("camera").hidden = true;
     $("setup").hidden = true;
     $("toggle").hidden = false;
     $("toggle").focus();
@@ -169,6 +171,7 @@ async function setup() {
 function describeError(e) {
   if (e instanceof SetupRejected) return e.message;
   if (e instanceof ApiError) {
+    if (e.detail === "timeout") return "the server took too long to answer";
     return e.status === 0 ? `the server could not be reached (${e.detail})`
                           : `the server refused the request (${e.status} ${e.detail})`;
   }
@@ -219,6 +222,7 @@ async function stop(reason = "user") {
   if (sessionId) api.endSession(sessionId, reason).catch(() => {});
   sessionId = null;
   closeCamera(stream);
+  $("camera").hidden = true;
   wakeLock?.release();
   wakeLock = null;
 }

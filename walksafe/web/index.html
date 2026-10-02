@@ -34,7 +34,9 @@
     </section>
 
     <p id="debug" aria-hidden="true"></p>
-    <video id="camera" playsinline muted hidden></video>
+    <!-- Shown while the camera is on: for a sighted helper, and some browsers stop
+         decoding a hidden video. -->
+    <video id="camera" class="preview" playsinline muted hidden aria-hidden="true"></video>
   </main>
   <script type="module" src="js/main.js"></script>
 </body>

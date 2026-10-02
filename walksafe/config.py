@@ -161,7 +161,8 @@ class PhoneConfig:
     bright_min:           float = 215
     blur_min:             float = 30      # variance of the Laplacian at 96x72, untuned
     stale_after_ms:       int   = 2000    # NFR-2
-    request_timeout_ms:   int   = 3000
+    request_timeout_ms:   int   = 5000
+    setup_timeout_ms:     int   = 30000   # the depth check runs DepthPro on demand
     max_messages_per_min: int   = 15      # NFR-13
     step_min_interval_ms: int   = 2000    # SRS UC-4: steps no more often than every 2 s
     # Expansion check (FR-16): block matching on the 96x72 copy. All untuned.

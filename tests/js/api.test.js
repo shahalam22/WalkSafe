@@ -86,3 +86,13 @@ test("FR-22 without server.json the page uses its own origin, and ?server= overr
   assert.equal(await findServer({ fetchFn: async () => { throw new TypeError("offline"); } }), "");
   assert.equal(await findServer({ fetchFn: async () => reply(200, { url: "x" }), override: "https://y" }), "https://y");
 });
+
+test("the depth check can wait longer than ordinary requests", async () => {
+  const slow = (url, init) => new Promise((resolve, reject) => {
+    const t = setTimeout(() => resolve(reply(200, { passed: true })), 30);
+    init.signal.addEventListener("abort", () => { clearTimeout(t); reject(new Error("aborted")); });
+  });
+  const api = new Api("", { fetchFn: slow, timeoutMs: 10 });
+  await assert.rejects(api.sendFrame("s", 1, 0, new Blob(["x"])), (e) => e.detail === "timeout");
+  assert.deepEqual(await api.depthCheck("s", 1.5, new Blob(["x"]), 1000), { passed: true });
+});

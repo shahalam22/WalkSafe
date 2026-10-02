@@ -71,7 +71,7 @@ async function depthCheck(ctx, sessionId) {
     const known = Number(await ask(DISTANCE, ["1.5", "1", "2", "3"].map((m) => ({ key: m, label: `${m} metres` }))));
     await ask(FACE_WALL, [{ key: "ready", label: "Ready" }]);
     const frame = await nextFrame(ctx);
-    const r = await api.depthCheck(sessionId, known, frame.blob);
+    const r = await api.depthCheck(sessionId, known, frame.blob, ctx.cfg.setup_timeout_ms);
     if (r.passed) {
       say(`Depth check passed. The wall measured ${r.measured_m} metres.`);
       const result = { depth_check_passed: true, depth_scale: r.depth_scale };

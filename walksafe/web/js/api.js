@@ -15,9 +15,9 @@ export class Api {
     this.timeoutMs = timeoutMs;
   }
 
-  async request(path, init) {
+  async request(path, init, timeoutMs = this.timeoutMs) {
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    const timer = setTimeout(() => abort.abort(), timeoutMs);
     try {
       const res = await this.fetch(this.base + path, { ...init, signal: abort.signal });
       const body = await res.json().catch(() => ({}));
@@ -45,12 +45,12 @@ export class Api {
     return this.postJson("/api/session/end", { session_id: sessionId, reason });
   }
 
-  depthCheck(sessionId, knownDistanceM, blob) {
+  depthCheck(sessionId, knownDistanceM, blob, timeoutMs = this.timeoutMs) {
     const form = new FormData();
     form.append("session_id", sessionId);
     form.append("known_distance_m", String(knownDistanceM));
     form.append("image", blob, "frame.jpg");
-    return this.request("/api/setup/depth", { method: "POST", body: form });
+    return this.request("/api/setup/depth", { method: "POST", body: form }, timeoutMs);
   }
 
   postEvents(sessionId, events) {

@@ -1,4 +1,7 @@
 import logging
+import time
+
+import numpy as np
 
 from walksafe.config import CFG, ModelConfig
 from walksafe.perception import Models
@@ -22,4 +25,23 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
         detector = YoloTracker(cfg),
     )
     log.info("All models loaded")
+    warm_up(models)
     return models
+
+
+def warm_up(models: Models, height: int = 378, width: int = 518) -> dict[str, float]:
+    """Run each model once, so the first real request is not slowed by GPU start-up."""
+    frame = np.random.default_rng(0).integers(0, 255, (height, width, 3), dtype=np.uint8)
+    steps = {
+        "depth":     lambda: models.depth.estimate(frame),
+        "detection": lambda: models.detector.track(frame, models.detector.new_tracker()),
+        "flow":      lambda: models.flow.compute(frame, frame),
+    }
+    timings = {}
+    for name, run in steps.items():
+        for attempt in ("first", "warm"):
+            start = time.perf_counter()
+            run()
+            timings[f"{name}_{attempt}_ms"] = round((time.perf_counter() - start) * 1000)
+    log.info("Warm-up timings: %s", timings)
+    return timings

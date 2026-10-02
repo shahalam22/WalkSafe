@@ -158,11 +158,15 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
             raise HTTPException(409, "not_a_setup_session")
         if not 0.5 <= known_m <= 5.0:
             raise HTTPException(422, "distance_out_of_range")
-        frame = pipeline.resize(decode(data), cfg.models.resize_width)
+        frame   = pipeline.resize(decode(data), cfg.models.resize_width)
+        started = time.perf_counter()
         with gpu:
             depth = models.depth.estimate(frame)
             fov   = models.depth.last_fov_deg
-        return check_depth(depth, known_m, fov, cfg.setup)
+        result = check_depth(depth, known_m, fov, cfg.setup)
+        log.info("Session %s depth check: %s in %.0f ms", session_id[:8], result,
+                 (time.perf_counter() - started) * 1000)
+        return result
 
     @app.post("/api/frame")
     async def frame(request: Request):
