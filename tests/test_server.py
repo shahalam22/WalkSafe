@@ -3,7 +3,7 @@ import tempfile
 import cv2
 import numpy as np
 import pytest
-from conftest import FakeDetector, fake_models
+from conftest import FakeDepth, FakeDetector, fake_models
 from fastapi.testclient import TestClient
 
 from walksafe.config import CFG
@@ -183,3 +183,36 @@ def test_events_are_accepted_for_a_live_session(client):
     assert client.post("/api/event", json={**batch, "session_id": "nope"}).status_code == 404
     bad = {"session_id": sid, "events": [{"type": "selfie"}]}
     assert client.post("/api/event", json=bad).status_code == 422
+
+
+def test_walking_needs_setup_to_have_passed(client):
+    for flags in ({"depth_check_passed": False}, {"direction_test_passed": False}):
+        r = client.post("/api/session", json={"profile": {**PROFILE, **flags}})
+        assert r.status_code == 403 and r.json()["detail"] == "setup_incomplete"
+    setup = client.post("/api/session", json={"purpose": "setup", "profile": {"consent_send_images": True}})
+    assert setup.status_code == 200
+
+
+def depth_check(client, sid, known):
+    return client.post("/api/setup/depth", data={"session_id": sid, "known_distance_m": known},
+                       files={"image": ("f.jpg", jpeg(), "image/jpeg")})
+
+
+def test_depth_check_passes_near_the_true_distance_and_reports_the_scale(clock):
+    client = TestClient(create_app(fake_models(depth=FakeDepth(1.6, fov_deg=68.0)), clock=clock))
+    sid = client.post("/api/session", json={"purpose": "setup",
+                                            "profile": {"consent_send_images": True}}).json()["session_id"]
+    body = depth_check(client, sid, 1.5).json()
+    assert body == {"measured_m": 1.6, "depth_scale": 0.937, "error_frac": 0.067, "passed": True, "fov_deg": 68.0}
+    assert depth_check(client, sid, 3.0).json()["passed"] is False
+
+
+def test_depth_check_ignores_an_implausible_field_of_view(clock):
+    client = TestClient(create_app(fake_models(depth=FakeDepth(1.5, fov_deg=150.0)), clock=clock))
+    sid = client.post("/api/session", json={"purpose": "setup",
+                                            "profile": {"consent_send_images": True}}).json()["session_id"]
+    assert depth_check(client, sid, 1.5).json()["fov_deg"] is None
+
+
+def test_depth_check_only_in_a_setup_session(client):
+    assert depth_check(client, start(client), 1.5).status_code == 409

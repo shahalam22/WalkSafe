@@ -132,7 +132,10 @@ On first run, DepthPro and RAFT weights are downloaded automatically from Huggin
 ### Phone API
 
 `POST /api/session` with `{"purpose": "walk", "profile": {...}}` returns
-`{"session_id"}`; it is refused (403) without consent to send images.
+`{"session_id"}`; it is refused (403) without consent to send images, and a
+`walk` session also needs `depth_check_passed` and `direction_test_passed`.
+`POST /api/setup/depth` (multipart `session_id`, `known_distance_m`, `image`, in a
+`setup` session) returns `{"measured_m", "depth_scale", "error_frac", "passed", "fov_deg"}`.
 `POST /api/frame` takes multipart fields `session_id`, `seq`, `capture_ts`
 (phone clock, ms) and `image` (JPEG, 518 px wide) and returns
 
@@ -155,7 +158,7 @@ returns 500 `{"error": "pipeline_fault"}` and the session carries on.
 
 1. Open the public URL in Chrome on Android (Safari on iOS also works, without vibration).
 2. Press **Start guidance**, the large button that fills most of the screen. The first time,
-   WalkSafe asks for consent to send camera images; nothing is sent without it.
+   it runs the spoken setup below; nothing is sent to the server without consent.
 3. Allow camera access and hold the phone at chest height, camera pointing ahead.
 4. WalkSafe plays a short sound and speaks only when the command changes. A `stop`
    interrupts anything being said and also vibrates.
@@ -170,6 +173,29 @@ outward growth in the centre gives a time to contact. Below 1.5 s for three fram
 in a row, the phone says `stop` at once, and no server command is spoken until the
 scene stops closing in. It keeps one request in flight and always sends the newest frame;
 results older than 2 s, or older than one already handled, are dropped.
+
+### First-time setup (FR-23)
+
+Spoken, answered with buttons, and usable with TalkBack or VoiceOver:
+
+1. **Limits.** WalkSafe does not replace a cane or guide dog and cannot detect kerbs or
+   steps. The user confirms they understand.
+2. **Consent** to send camera images. Declining gives phone-only mode (obstacle
+   warnings from the expansion check) and skips the server checks.
+3. **How the phone is held** (chest strap or hand). Where the browser reports
+   orientation, the phone is asked to be held level.
+4. **Depth check.** The user stands facing a flat wall at a chosen distance (a cane
+   length is a good measure); the server measures it. More than 25 % off fails setup;
+   otherwise the ratio becomes the depth scale. DepthPro's own field-of-view estimate is
+   used when plausible, otherwise the standard 70°.
+5. **Direction test.** After a tone, the user steps left; the server's ego-motion
+   estimate must say `stepping_left`. If it says `stepping_right`, left and right are
+   reversed and WalkSafe refuses to run (NFR-6).
+6. **Shoulder width** (narrow, average, broad), used to judge openings (FR-8).
+
+The profile is kept in the browser's storage and sent when a session starts; the
+server refuses a walking session unless both checks passed. **Run setup again** is in
+the settings.
 
 ### Capability levels
 

@@ -122,6 +122,14 @@ class QualityConfig:
 
 
 @dataclass(frozen=True)
+class SetupConfig:
+    depth_check_max_error: float = 0.25    # setup is refused beyond this (FR-23)
+    depth_check_centre:    float = 0.2     # fraction of width and height measured at the centre
+    fov_min_deg:           float = 40.0    # a model estimate outside this range is not used
+    fov_max_deg:           float = 100.0
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     port:            int   = 7860
     # The phone page is served from GitHub Pages (FR-22) as well as from the server itself.
@@ -171,6 +179,14 @@ class PhoneConfig:
     battery_end_level:      float = 0.05
     event_flush_ms:         int   = 5000
     max_queued_events:      int   = 500
+    # Spoken setup (FR-23)
+    direction_test_ms:      int   = 5000
+    max_pitch_deg:          float = 25      # aim check: phone roughly level
+    shoulder_narrow_m:      float = 0.38
+    shoulder_average_m:     float = 0.45
+    shoulder_wide_m:        float = 0.52
+    mount_chest_m:          float = 1.3
+    mount_hand_m:           float = 1.1
 
 
 @dataclass(frozen=True)
@@ -190,6 +206,7 @@ class Config:
     openings: OpeningConfig  = field(default_factory=OpeningConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     quality:  QualityConfig  = field(default_factory=QualityConfig)
+    setup:    SetupConfig    = field(default_factory=SetupConfig)
     server:   ServerConfig   = field(default_factory=ServerConfig)
     phone:    PhoneConfig    = field(default_factory=PhoneConfig)
     ui:       UiConfig       = field(default_factory=UiConfig)

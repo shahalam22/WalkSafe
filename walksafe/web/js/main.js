@@ -7,13 +7,15 @@ import { CONFIG } from "./config.js";
 import { ExpansionCheck } from "./expansion.js";
 import { Guidance } from "./guidance.js";
 import { checkFrame } from "./quality.js";
+import { runSetup, SetupRejected } from "./setup.js";
 import { Speaker } from "./speech.js";
 
 const $ = (id) => document.getElementById(id);
 const server = new URLSearchParams(location.search).get("server") ?? "";
 const api = new Api(server, { timeoutMs: CONFIG.request_timeout_ms });
 const speaker = new Speaker();
-const settings = loadSettings();
+const settings = load("walksafe.settings", { muted: false, verbosity: "normal", rate: 1 });
+let profile = load("walksafe.profile", null);
 
 let running = false;
 let stream = null;
@@ -27,20 +29,20 @@ let expansion = null;
 let events = [];
 let timers = [];
 
-function loadSettings() {
-  const defaults = { consent: null, muted: false, verbosity: "normal", rate: 1 };
+function load(key, defaults) {
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem("walksafe.settings") ?? "{}") };
+    const saved = JSON.parse(localStorage.getItem(key) ?? "null");
+    return saved && defaults ? { ...defaults, ...saved } : saved ?? defaults;
   } catch {
     return defaults;
   }
 }
 
-function saveSettings() {
+function save(key, value) {
   try {
-    localStorage.setItem("walksafe.settings", JSON.stringify(settings));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // Private browsing: settings last for this visit only.
+    // Private browsing: kept for this visit only.
   }
 }
 
@@ -80,24 +82,20 @@ async function flushEvents() {
   }
 }
 
+// The setup is needed before the first walk, and again until it passes.
+const setUp = () => typeof profile?.consent_send_images === "boolean"
+  && (!profile.consent_send_images || (profile.depth_check_passed && profile.direction_test_passed));
+
 async function start() {
   speaker.unlock();
-  if (settings.consent === null) {
-    $("consent").hidden = false;
-    $("consent-allow").focus();
-    return;
-  }
+  if (!setUp()) return setup();
   running = true;
   $("toggle").textContent = "Stop guidance";
-  try {
-    stream = await openCamera($("camera"));
-  } catch {
+  if (!(await openCameraOrSay())) {
     running = false;
     $("toggle").textContent = "Start guidance";
-    announce("Camera not available. Guidance has not started.", { urgent: true });
     return;
   }
-  grabber = new FrameGrabber($("camera"), CONFIG);
   expansion = new ExpansionCheck(CONFIG);
   guidance = new Guidance({
     output: speaker, now: clockMs, cfg: CONFIG,
@@ -111,7 +109,7 @@ async function start() {
   await keepScreenOn();
   announce("Guidance starting.");
 
-  if (settings.consent) {
+  if (profile.consent_send_images) {
     capability.requestSent();          // waiting for the server from now on
     connect();
   } else {
@@ -123,6 +121,76 @@ async function start() {
     setInterval(() => capability.tick(), 250),
     setInterval(flushEvents, CONFIG.event_flush_ms),
   ];
+}
+
+async function openCameraOrSay() {
+  try {
+    stream = await openCamera($("camera"));
+    grabber = new FrameGrabber($("camera"), CONFIG);
+    return true;
+  } catch {
+    announce("Camera not available. Guidance has not started.", { urgent: true });
+    return false;
+  }
+}
+
+async function setup() {
+  $("toggle").hidden = true;
+  if (!(await openCameraOrSay())) { $("toggle").hidden = false; return; }
+  try {
+    profile = await runSetup({
+      ask, say: (t) => speaker.speak(t), tone: () => speaker.earcon("announce"),
+      api, cfg: CONFIG, pitch: readPitch, now: clockMs, sleep,
+      grab: () => (grabber.ready() ? grabber.jpeg() : null),
+      base: {
+        user_id: profile?.user_id ?? crypto.randomUUID(),
+        phone_model: navigator.userAgent.slice(0, 128),
+      },
+    });
+    save("walksafe.profile", profile);
+  } catch (e) {
+    const why = e instanceof SetupRejected ? e.message : "the server could not be reached";
+    announce(`Setup did not finish: ${why}. Press the large button to try again.`, { urgent: true });
+  } finally {
+    closeCamera(stream);
+    $("setup").hidden = true;
+    $("toggle").hidden = false;
+    $("toggle").focus();
+  }
+}
+
+// One question, answered with buttons; the first is the large one.
+function ask(question, choices) {
+  return new Promise((resolve) => {
+    $("setup").hidden = false;
+    $("setup-question").textContent = question;
+    const buttons = choices.map((c, i) => {
+      const b = document.createElement("button");
+      b.textContent = c.label;
+      if (i === 0) b.className = "primary";
+      b.setAttribute("aria-describedby", "setup-question");
+      b.addEventListener("click", () => resolve(c.key), { once: true });
+      return b;
+    });
+    $("setup-choices").replaceChildren(...buttons);
+    speaker.speak(question, { interrupt: true });
+    buttons[0].focus();
+  });
+}
+
+// How far the camera points up (+) or down (-) from level, or null if unknown.
+async function readPitch() {
+  if (typeof DeviceOrientationEvent === "undefined") return null;
+  if (DeviceOrientationEvent.requestPermission) {          // iOS asks first
+    const answer = await DeviceOrientationEvent.requestPermission().catch(() => "denied");
+    if (answer !== "granted") return null;
+  }
+  return new Promise((resolve) => {
+    const done = (value) => { removeEventListener("deviceorientation", on); resolve(value); };
+    const on = (e) => done(e.beta === null ? null : e.beta - 90);
+    addEventListener("deviceorientation", on);
+    setTimeout(() => done(null), 1000);
+  });
 }
 
 async function stop(reason = "user") {
@@ -166,7 +234,7 @@ function checkLoop() {
 async function connect() {
   while (running) {
     try {
-      sessionId = await api.startSession({ consent_send_images: true });
+      sessionId = await api.startSession({ ...profile, verbosity: settings.verbosity, speech_rate: settings.rate });
     } catch {
       await sleep(2000);               // capability reports the silence
       continue;
@@ -200,36 +268,29 @@ async function watchBattery() {
 
 $("toggle").addEventListener("click", () => (running ? stop() : start()));
 
-$("consent-allow").addEventListener("click", () => {
-  settings.consent = true;
-  saveSettings();
-  $("consent").hidden = true;
-  start();
-});
-
-$("consent-deny").addEventListener("click", () => {
-  settings.consent = false;
-  saveSettings();
-  $("consent").hidden = true;
-  start();                             // phone-only: obstacle warnings, nothing sent
+$("redo-setup").addEventListener("click", () => {
+  if (running) stop();
+  profile = { user_id: profile?.user_id ?? crypto.randomUUID() };
+  save("walksafe.profile", profile);     // until the new setup passes, guidance stays blocked
+  setup();
 });
 
 $("mute").addEventListener("click", () => {
   settings.muted = !settings.muted;
-  saveSettings();
+  save("walksafe.settings", settings);
   applySettings();
   speaker.speak(settings.muted ? "Guidance muted" : "Guidance on", { interrupt: true });
 });
 
 $("verbosity").addEventListener("change", (e) => {
   settings.verbosity = e.target.value;
-  saveSettings();
+  save("walksafe.settings", settings);
   applySettings();
 });
 
 $("rate").addEventListener("change", (e) => {
   settings.rate = Number(e.target.value);
-  saveSettings();
+  save("walksafe.settings", settings);
   applySettings();
   speaker.speak("Speech rate changed");
 });

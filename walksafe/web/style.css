@@ -64,6 +64,10 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 
 #status { min-height: 3em; color: var(--fg); }
 
+#setup-question { font-size: 1.4rem; }
+
+.choices { display: grid; gap: 0.75rem; }
+
 .settings {
   display: grid;
   gap: 0.75rem;

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from walksafe import pipeline, storage
-from walksafe.config import CFG, Config, Profile, phone_js
+from walksafe.config import CFG, Config, Profile, SetupConfig, phone_js
 from walksafe.perception import Models
 from walksafe.session import Session, SessionStore
 
@@ -85,6 +85,9 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
         p = req.profile
         if not p.consent_send_images:
             raise HTTPException(403, "consent_required")
+        # Walking needs a passed depth check and direction test (FR-23, NFR-6).
+        if req.purpose == "walk" and not (p.depth_check_passed and p.direction_test_passed):
+            raise HTTPException(403, "setup_incomplete")
         profile = Profile(p.camera_fov_deg, p.shoulder_width_m, p.clearance_margin_m, p.depth_scale)
         s = sessions.add(Session(models.detector.new_tracker(), profile,
                                  purpose=req.purpose, last_seen=clock()))
@@ -107,22 +110,48 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
                 log.info("Session %s: %s -> %s (%s)", req.session_id[:8], e.from_level, e.to_level, e.cause)
         return {"ok": True, "accepted": len(req.events)}
 
-    @app.post("/api/frame")
-    async def frame(request: Request):
-        started = time.perf_counter()
+    async def read_form(request: Request, **fields):
         # Check the size before parsing: larger uploads would be spooled to a temporary file.
         size = int(request.headers.get("content-length") or 0)
         if not 0 < size <= cfg.server.max_image_bytes:
             raise HTTPException(413, "image_too_large")
         form = await request.form()
         try:
-            session_id = str(form["session_id"])
-            seq        = int(form["seq"])
-            capture_ts = float(form["capture_ts"])
-            data       = await form["image"].read()
+            values = {name: kind(form[name]) for name, kind in fields.items()}
+            return values, await form["image"].read()
         except (KeyError, ValueError, AttributeError) as e:
             raise HTTPException(422, "bad_request") from e
-        return await run_in_threadpool(handle_frame, session_id, seq, capture_ts, data, started)
+
+    def decode(data: bytes) -> np.ndarray:
+        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(400, "bad_image")
+        return image
+
+    @app.post("/api/setup/depth")
+    async def setup_depth(request: Request):
+        f, data = await read_form(request, session_id=str, known_distance_m=float)
+        return await run_in_threadpool(handle_depth_check, f["session_id"], f["known_distance_m"], data)
+
+    def handle_depth_check(session_id, known_m, data):
+        s = sessions.get(session_id)
+        if s is None:
+            raise HTTPException(404, "unknown_session")
+        if s.purpose != "setup":
+            raise HTTPException(409, "not_a_setup_session")
+        if not 0.5 <= known_m <= 5.0:
+            raise HTTPException(422, "distance_out_of_range")
+        frame = pipeline.resize(decode(data), cfg.models.resize_width)
+        with gpu:
+            depth = models.depth.estimate(frame)
+            fov   = models.depth.last_fov_deg
+        return check_depth(depth, known_m, fov, cfg.setup)
+
+    @app.post("/api/frame")
+    async def frame(request: Request):
+        started = time.perf_counter()
+        f, data = await read_form(request, session_id=str, seq=int, capture_ts=float)
+        return await run_in_threadpool(handle_frame, f["session_id"], f["seq"], f["capture_ts"], data, started)
 
     def handle_frame(session_id, seq, capture_ts, data, started):
         now = clock()
@@ -131,9 +160,7 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
         s = sessions.get(session_id)
         if s is None:
             raise HTTPException(404, "unknown_session")
-        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        if image is None:
-            raise HTTPException(400, "bad_image")
+        image = decode(data)
         # Newest frame only: the phone keeps one request in flight, and anything
         # that arrives while this session is busy is refused rather than queued.
         if not s.lock.acquire(blocking=False):
@@ -168,6 +195,22 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
     if WEB_DIR.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app
+
+
+def check_depth(depth: np.ndarray, known_m: float, fov_deg: float | None, cfg: SetupConfig = CFG.setup) -> dict:
+    """The setup depth check: the wall straight ahead against the distance the user stands from it."""
+    H, W = depth.shape
+    h, w = int(H * cfg.depth_check_centre / 2), int(W * cfg.depth_check_centre / 2)
+    measured = float(np.median(depth[H // 2 - h:H // 2 + h + 1, W // 2 - w:W // 2 + w + 1]))
+    error    = abs(measured - known_m) / known_m
+    usable_fov = fov_deg is not None and cfg.fov_min_deg <= fov_deg <= cfg.fov_max_deg
+    return {
+        "measured_m":  round(measured, 2),
+        "depth_scale": round(known_m / measured, 3),
+        "error_frac":  round(error, 3),
+        "passed":      error <= cfg.depth_check_max_error,
+        "fov_deg":     round(fov_deg, 1) if usable_fov else None,
+    }
 
 
 def serve(app: FastAPI, port: int = CFG.server.port) -> None:

@@ -45,6 +45,14 @@ export class Api {
     return this.postJson("/api/session/end", { session_id: sessionId, reason });
   }
 
+  depthCheck(sessionId, knownDistanceM, blob) {
+    const form = new FormData();
+    form.append("session_id", sessionId);
+    form.append("known_distance_m", String(knownDistanceM));
+    form.append("image", blob, "frame.jpg");
+    return this.request("/api/setup/depth", { method: "POST", body: form });
+  }
+
   postEvents(sessionId, events) {
     return this.postJson("/api/event", { session_id: sessionId, events });
   }

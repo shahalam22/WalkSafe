@@ -4,9 +4,10 @@ from walksafe.perception import Box, Models
 
 
 class FakeDepth:
-    def __init__(self, metres=4.0):
-        self.metres = metres
-        self.calls  = 0
+    def __init__(self, metres=4.0, fov_deg=None):
+        self.metres       = metres
+        self.calls        = 0
+        self.last_fov_deg = fov_deg
 
     def estimate(self, frame_bgr):
         self.calls += 1

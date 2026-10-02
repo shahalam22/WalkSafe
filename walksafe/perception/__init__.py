@@ -17,6 +17,8 @@ class Box:
 
 
 class DepthEstimator(Protocol):
+    last_fov_deg: float | None      # the model's own estimate of the horizontal field of view, if it has one
+
     def estimate(self, frame_bgr: np.ndarray) -> np.ndarray:
         """Depth in metres, same height and width as the frame."""
 
