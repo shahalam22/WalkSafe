@@ -278,8 +278,8 @@ async function connect() {
       grab: async () => (grabber.ready() && quality.ok ? grabber.jpeg() : null),
       onSent: () => capability.requestSent(),
       onResult: (r) => {
-        capability.serverAnswered(r.level);
-        guidance.serverResult(r);
+        // An answer too old to speak counts as no answer, so the level drops and says why.
+        if (guidance.serverResult(r) !== "stale") capability.serverAnswered(r.level);
       },
       onError: () => {},
     });

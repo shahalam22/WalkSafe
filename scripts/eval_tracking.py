@@ -6,7 +6,7 @@ long it lived, how often it was seen, its motion classes, closest distance,
 median approach speed and worst risk. Check these against what the clip shows.
 For T4, run the same clip at --fps 1.5, 5 and 15 and compare the speeds.
 
-    python scripts/eval_tracking.py clip.mp4 --fps 2
+    PYTHONPATH=. python scripts/eval_tracking.py clip.mp4 --fps 2
 """
 import argparse
 import json

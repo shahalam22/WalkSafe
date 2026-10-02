@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.requests import ClientDisconnect
 
 from walksafe import pages, pipeline
 from walksafe.config import CFG, Config, Profile, SetupConfig, phone_js
@@ -128,10 +129,13 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         if int(request.headers.get("content-length") or 0) > cfg.server.max_image_bytes:
             raise HTTPException(413, "image_too_large")
         body = b""
-        async for chunk in request.stream():
-            body += chunk
-            if len(body) > cfg.server.max_image_bytes:
-                raise HTTPException(413, "image_too_large")
+        try:
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > cfg.server.max_image_bytes:
+                    raise HTTPException(413, "image_too_large")
+        except ClientDisconnect as e:          # the phone gave up waiting; nobody to answer
+            raise HTTPException(400, "client_disconnected") from e
         request._body = body                 # Starlette parses the form from this
         form = await request.form()
         try:

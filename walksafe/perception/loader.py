@@ -18,6 +18,7 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
     from walksafe.perception.flow import RaftSmall
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.backends.cudnn.benchmark = True      # every frame has the same size
     log.info("Device: %s", device)
     models = Models(
         depth    = DepthPro(cfg.depth_model_id, device, cfg.depth_fp16),

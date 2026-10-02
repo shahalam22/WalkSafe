@@ -6,8 +6,8 @@ memory, live sessions and dropped log items. In-process by default (real
 models, real server code, no network); with --url it goes through the tunnel
 and reports latency and errors only.
 
-    python scripts/soak.py --minutes 120 --video street.mp4
-    python scripts/soak.py --minutes 120 --url https://abc.gradio.live
+    PYTHONPATH=. python scripts/soak.py --minutes 120 --video street.mp4
+    PYTHONPATH=. python scripts/soak.py --minutes 120 --url https://abc.gradio.live
 """
 import argparse
 import json

@@ -176,7 +176,7 @@ def test_every_setting_the_page_reads_comes_from_config_py():
 def test_events_are_accepted_for_a_live_session(client):
     sid = start(client)
     batch = {"session_id": sid, "events": [
-        {"type": "level_change", "occurred_at": 1.0, "cause": "server not responding",
+        {"type": "level_change", "occurred_at": 1.0, "cause": "the server is not answering in time",
          "from_level": "L0", "to_level": "L2"},
         {"type": "delivery", "seq": 3, "outcome": "spoken", "spoken_at": 2.0},
         {"type": "phone_stop", "occurred_at": 3.0, "ttc_s": 1.1},

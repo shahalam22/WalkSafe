@@ -86,7 +86,7 @@ export class Capability {
   tick() {
     const now = this.now();
     const silent = this.pendingSince !== null && now - this.pendingSince > this.cfg.server_silent_ms;
-    this.report("server", silent, "L2", "server not responding", 0);
+    this.report("server", silent, "L2", "the server is not answering in time", 0);
     this.report("check", now - this.lastCheck > this.cfg.check_dead_ms, "L3", "the obstacle check stopped", 0);
 
     let level = "L0", cause = "";

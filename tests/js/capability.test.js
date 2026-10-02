@@ -69,7 +69,7 @@ test("T10 server silence drops to L2 after 2 s and is announced urgently", () =>
   run(1000);
   run(3000, { serverDown: true });
   assert.equal(cap.level, "L2");
-  assert.equal(said.at(-1).text, "Route guidance lost: server not responding. Obstacle warnings only.");
+  assert.equal(said.at(-1).text, "Route guidance lost: the server is not answering in time. Obstacle warnings only.");
   assert.equal(said.at(-1).urgent, true);
 });
 
@@ -102,7 +102,7 @@ test("T10 the most severe fault wins and its cause is the one announced", () => 
   run(1000);
   run(3000, { serverDown: true, visibility: false });
   assert.equal(cap.level, "L2");
-  assert.equal(cap.cause, "server not responding");
+  assert.equal(cap.cause, "the server is not answering in time");
 });
 
 test("T10 a reduced level is repeated every minute, never left silent", () => {
@@ -180,7 +180,7 @@ test("T11 a server that fails mid-session is announced, and recovery is automati
   clearInterval(ticker);
   assert.deepEqual(said, [
     "Full guidance.",
-    "Route guidance lost: server not responding. Obstacle warnings only.",
+    "Route guidance lost: the server is not answering in time. Obstacle warnings only.",
     "Full guidance restored.",
   ]);
   assert.ok(answered > 5);

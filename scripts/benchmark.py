@@ -4,9 +4,9 @@ Frames go straight into the pipeline, one after another, each stamped with the
 time it was taken, so the 0.4 s depth age cap behaves as it would live. JPEG
 decoding and the network are not included; server_ms in /api/frame covers those.
 
-    python scripts/benchmark.py
-    python scripts/benchmark.py --fp16 --flow-scale 0.5
-    python scripts/benchmark.py --video street.mp4 --frames 120
+    PYTHONPATH=. python scripts/benchmark.py
+    PYTHONPATH=. python scripts/benchmark.py --fp16 --flow-scale 0.5
+    PYTHONPATH=. python scripts/benchmark.py --video street.mp4 --frames 120
 """
 import argparse
 import json

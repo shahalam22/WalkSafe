@@ -4,7 +4,7 @@ Photograph obstacles straight ahead, centred, at measured distances, and put
 the distance in the file name: wall_2.0m.jpg, person_3.5m.jpg, glass_1.5m.jpg.
 Include glass and a blank wall; their spread should come out higher.
 
-    python scripts/eval_depth.py photos/ [--band 0.15] [--fp16]
+    PYTHONPATH=. python scripts/eval_depth.py photos/ [--band 0.15] [--fp16]
 """
 import argparse
 import json

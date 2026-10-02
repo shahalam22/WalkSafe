@@ -47,13 +47,13 @@ def test_deliveries_phone_stops_and_events_from_the_phone(tmp_path):
     w.events("s1", [
         EventIn(type="delivery", seq=1, outcome="spoken", spoken_at=1_000_400.0),
         EventIn(type="phone_stop", seq=1, occurred_at=1_002_000.0, ttc_s=1.2),
-        EventIn(type="level_change", occurred_at=1_003_000.0, cause="server not responding",
+        EventIn(type="level_change", occurred_at=1_003_000.0, cause="the server is not answering in time",
                 from_level="L0", to_level="L2"),
     ])
     w.close()
     assert rows(db, "SELECT spoken, delay_ms FROM decision WHERE source = 'server'") == [(1, 400)]
     assert rows(db, "SELECT command, spoken FROM decision WHERE source = 'phone'") == [("stop", 1)]
-    assert rows(db, "SELECT to_level, cause FROM event") == [("L2", "server not responding")]
+    assert rows(db, "SELECT to_level, cause FROM event") == [("L2", "the server is not answering in time")]
 
 
 def test_t13_sessions_are_closed_on_end_and_at_shutdown(tmp_path):

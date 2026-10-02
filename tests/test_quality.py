@@ -1,8 +1,8 @@
 from dataclasses import replace
 
 import numpy as np
+from test_decision import PERSON
 
-from tests.test_decision import PERSON
 from walksafe.config import CFG
 from walksafe.interpretation.quality import check_frame, confidence
 
