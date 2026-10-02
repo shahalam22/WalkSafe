@@ -12,7 +12,16 @@ WalkSafe combines three deep learning models in a unified pipeline to help pedes
 - **YOLOv8** — real-time object detection and multi-frame tracking
 - **RAFT-Small** — optical flow estimation for ego-motion analysis
 
-The system runs in a Gradio web app accessible from any smartphone browser. It speaks navigation commands (stop, walk forward, step left, turn right, etc.) using the browser's built-in Web Speech API and logs every decision to a local SQLite database for research and analysis.
+WalkSafe is a web app with two kinds of users:
+
+- **Blind user** — opens WalkSafe from the phone's home screen (or "Hey Google, open WalkSafe"),
+  taps anywhere to start, and hears spoken commands (stop, walk forward, step left, …).
+  Tapping again or shaking the phone stops it. No sight is needed at any step.
+- **Admin** — adds blind users, sets up their phones once, saves the current server address,
+  and reviews every session's data on a dashboard (charts and CSV export).
+
+The vision models run on a GPU server (Google Colab). The app page is a static installable web app
+(PWA) at a fixed address. Sign-in and all session data live in **Supabase** (Postgres + Auth).
 
 ---
 
@@ -20,48 +29,79 @@ The system runs in a Gradio web app accessible from any smartphone browser. It s
 
 | Feature | Description |
 |---|---|
-| Depth Estimation | Dense per-pixel depth map updated every 5 frames |
+| Depth Estimation | Dense per-pixel depth map, computed in a background thread so a slow depth model never holds up a frame |
 | Object Detection | Detects people, vehicles, and obstacles with confidence filtering |
 | Motion Tracking | 8-frame trajectory history per agent with motion classification |
 | Time-to-Collision | Calculates TTC for every tracked agent |
 | Gap Detection | Identifies and measures safe walking corridors (left, ahead, right) |
 | Ego Motion Analysis | Detects user action (still, walking, turning) and speed via optical flow |
 | Navigation Commands | Spoken guidance: `walk_forward`, `stop`, `step_left`, `step_right`, `turn_left`, `turn_right`, `yield`, `slow_down` |
-| Fusion Visualization | Side-by-side camera / depth / flow / detection panel with annotated advisory strip |
-| Session Logging | All frames, agents, gaps, and decisions recorded to SQLite |
-| Analytics Dashboard | Per-session metrics, command histograms, speed profiles, and risk distributions |
+| Vision-free control | Full-screen start/stop button (TalkBack-friendly), shake to stop, everything spoken, screen kept awake and black |
+| Demo view | Optional on-screen camera + fusion panel (depth / flow / detections / advisory strip) for presentations |
+| Accounts | Admin and blind-user roles with Supabase Auth; phones stay signed in |
+| Session Logging | Every frame, agent, gap, and decision written to Supabase in the background |
+| Admin Dashboard | Per-user and per-session metrics, command / risk / action charts, speed profile, CSV export |
 
 ---
 
 ## Architecture
 
 ```
-app.py                  # Entry point — loads models, launches Gradio
-config.py               # All tunable thresholds and parameters
-models.py               # Model loading (DepthPro, YOLO, RAFT, speaker, DB)
-state.py                # Thread-safe shared application state
+Phone (Chrome, installed PWA)          Colab GPU server                    Supabase
+┌──────────────────────────┐  frames  ┌───────────────────────────┐ rows  ┌─────────────────┐
+│ web/  guidance screen     │ ───────▶ │ app.py  FastAPI + tunnel   │ ────▶ │ Postgres tables │
+│       admin dashboard     │ ◀─────── │ pipeline/  DepthPro, YOLO, │       │ Auth (logins)   │
+│       speech, camera      │ command  │            RAFT, decisions │       │                 │
+└──────────────────────────┘          └───────────────────────────┘       └─────────────────┘
+          │  sign-in, server address, dashboard data (read directly)              ▲
+          └────────────────────────────────────────────────────────────────────────┘
+```
+
+```
+app.py                  # Entry point — loads models, starts the API, opens the tunnel
+config.py               # Thresholds and parameters (CFG) and server settings (SERVER)
+models.py               # Model loading (DepthPro, YOLO, RAFT)
+state.py                # Thread-safe shared pipeline state
 
 pipeline/
+  processor.py          # Full per-frame pipeline orchestration (+ background depth)
   depth.py              # DepthPro inference + depth map extraction
   detection.py          # YOLOv8 detection, tracking, risk assessment
   flow.py               # RAFT optical flow + ego motion classification
-  gaps.py               # Navigable gap detection from depth + detections
+  gaps.py               # Navigable gap detection from depth
   suggestion.py         # Navigation decision logic
   fusion.py             # Visualization panel + advisory strip rendering
 
-audio/
-  speaker.py            # Web Speech API TTS interface
+audio/speaker.py        # Command → spoken phrase
 
-ui/
-  layout.py             # Gradio layout (Navigation + Dashboard tabs)
-  processor.py          # Full per-frame pipeline orchestration
-  dashboard.py          # Analytics dashboard with charts
+server/
+  api.py                # HTTP API: sessions, frames, admin user management
+  auth.py               # Checks Supabase login tokens (public keys, no call per frame)
+  supa.py               # Supabase REST + Auth admin client (secret key)
+  tunnel.py             # Public HTTPS address (cloudflared, or Gradio as fallback)
 
-storage/
-  schema.py             # SQLite schema (sessions, frames, agents, gaps)
-  writer.py             # Async batch writer (non-blocking, 50-frame flush)
-  queries.py            # SQL queries for dashboard
+storage/writer.py       # Background batch writer to Supabase (never blocks guidance)
+
+supabase/schema.sql     # Tables, row level security, dashboard functions
+
+web/                    # The app (static PWA): sign-in, guidance screen, admin dashboard
+scripts/dev_server.py   # Run the server without a GPU (made-up commands) to try the app
+tests/                  # Server tests (no GPU needed)
 ```
+
+### API
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | `/api/health` | anyone | Is the server up and are the models loaded |
+| POST | `/api/session/start` | signed in | Start a guidance session (ends any running one) |
+| POST | `/api/frame?session_id=…&view=0\|1` | signed in | One JPEG frame in, the command out (and the fusion panel when `view=1`) |
+| POST | `/api/session/stop` | signed in | End the session |
+| POST | `/api/admin/users` | admin | Add a blind user |
+| PATCH | `/api/admin/users/{id}` | admin | New password, turn on/off, rename |
+| DELETE | `/api/admin/users/{id}` | admin | Remove a blind user (their sessions are kept) |
+
+The models are shared, so one guidance session runs at a time. A session with no frames for 60 s is closed.
 
 ---
 
@@ -88,67 +128,49 @@ Risk levels assigned to each tracked agent:
 
 ---
 
-## Requirements
+## Running WalkSafe
 
-- Python 3.9+
-- CUDA-capable GPU strongly recommended (CPU fallback is very slow)
-- ~4 GB VRAM for DepthPro + RAFT + YOLO loaded together
+### 1. Supabase (once)
 
-Install dependencies:
+1. Run [supabase/schema.sql](supabase/schema.sql) in the Supabase SQL Editor (safe to run again).
+2. Authentication → Sign In / Providers: turn **off** "Allow new users to sign up".
+3. Create the admin in Authentication → Users, then mark it admin (see the end of `schema.sql`).
+
+### 2. The server (each time, on Colab)
+
+Open [run_on_colab.ipynb](run_on_colab.ipynb) in Colab with a **T4 GPU**, add the secret
+`SUPABASE_SECRET_KEY`, and run all cells. The last cell prints:
+
+```
+WalkSafe server address:  https://<random>.trycloudflare.com
+```
+
+Paste that address in the app: **Admin → Server → Save**. Every phone reads it when WalkSafe starts.
+The address changes every time the notebook starts; the manual step goes away once the server has a
+permanent home.
+
+### 3. The app page
+
+`web/` is a static site, published to a separate public repo with GitHub Pages so it has a fixed
+address (this repo stays private; the page holds only public values):
 
 ```bash
-pip install -r requirements.txt
+scripts/publish_web.sh          # → https://shahalam22.github.io/walksafe-app/
 ```
 
-Key packages:
+Run it again after changing anything in `web/`. The server also serves the app at its own address,
+which is handy for testing but changes every run.
 
-```
-transformers>=4.52.0        # DepthPro
-ultralytics>=8.3.0          # YOLOv8
-torchvision>=0.15.0         # RAFT optical flow
-gradio>=4.0.0               # Web UI
-opencv-python-headless>=4.8.0
-torch>=2.0.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-```
+### 4. Setting up a blind user's phone
 
----
+Admin → **Phone setup** lists the steps: add the user, sign in on their Android phone in Chrome,
+allow the camera, test the voice, and install the app to the home screen.
 
-## Running the App
+### Browser limits
 
-```bash
-python app.py
-```
-
-Gradio will print a local URL (and a public share link). Open the link on the device whose camera you want to use — typically a smartphone.
-
-On first run, DepthPro and RAFT weights are downloaded automatically from Hugging Face and the `ultralytics` model hub.
-
----
-
-## Usage
-
-### Navigation Tab
-
-1. Open the Gradio URL in your phone browser.
-2. Grant camera permission when prompted.
-3. Hold the phone in front of you, camera pointing ahead.
-4. The app streams frames to the server and returns:
-   - A fused visualization (camera + depth + flow + detections)
-   - A color-coded advisory strip showing the recommended command, ego action, best gap, and most critical agent
-   - A spoken navigation command via the browser's TTS
-5. Press **Reset Session** to end the current session and start a new one.
-
-### Dashboard Tab
-
-Select a session from the dropdown and click **Load** to view:
-
-- Total frames, average speed, agent encounters, critical events
-- Navigation command distribution
-- Agent risk level distribution
-- Ego action histogram
-- Speed profile over time
+A web page cannot use the camera while the screen is off, so WalkSafe keeps the screen awake and black
+while guiding. If the screen does turn off, guidance stops, and it starts again by itself when the
+screen comes back on.
 
 ---
 
@@ -158,43 +180,46 @@ All parameters are in [config.py](config.py). Key values:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `YOLO_CONF` | 0.35 | Detection confidence threshold |
-| `DEPTH_UPDATE_EVERY` | 5 | Frames between full depth inference runs |
-| `VIDEO_WIDTH` | 518 | Input resize width (must be 14-pixel aligned) |
-| `MIN_GAP_WIDTH_PX` | 50 | Minimum gap width to consider navigable |
-| `HISTORY_LEN` | 8 | Agent trajectory history in frames |
-| `TTC_EMERGENCY` | 1.0 | TTC threshold for critical risk (seconds) |
-| `TTC_CRITICAL` | 2.0 | TTC threshold for high risk (seconds) |
-| `TTC_URGENT` | 4.0 | TTC threshold for moderate risk (seconds) |
-| `FOV_DEG` | 70 | Estimated camera horizontal field of view |
+| `yolo_conf` | 0.35 | Detection confidence threshold |
+| `depth_in_background` | True | Compute depth in its own thread; frames use the newest depth map |
+| `depth_every_n_frames` | 5 | Frames between depth runs when `depth_in_background` is off |
+| `resize_width` | 518 | Input resize width (14-pixel aligned) |
+| `gap_min_width_px` | 50 | Minimum gap width to consider navigable |
+| `motion_window` | 8 | Agent trajectory history in frames |
+| `ttc_emergency` | 1.0 | TTC threshold for critical risk (seconds) |
+| `ttc_critical` | 2.0 | TTC threshold for high risk (seconds) |
+| `ttc_urgent` | 4.0 | TTC threshold for moderate risk (seconds) |
+| `fov_deg` | 70 | Estimated camera horizontal field of view |
+| `SERVER["tunnel"]` | cloudflared | `cloudflared`, `gradio` or `none` (also `WALKSAFE_TUNNEL`) |
 
 ---
 
-## Database Schema
+## Database (Supabase)
 
-Sessions are stored in `walksafe.db` (created automatically).
+Defined in [supabase/schema.sql](supabase/schema.sql):
 
-**`sessions`** — one row per run  
+**`profiles`** — one row per account: role (`admin` / `blind`), name, active flag  
+**`sessions`** — one row per walk: user, start, end, frame count, how it ended  
 **`frames`** — per-frame decision, ego state, and summary counts  
 **`agents`** — every tracked detection (position, distance, TTC, risk, motion)  
-**`gaps`** — every detected navigable gap (direction, width, distance)
+**`gaps`** — every detected navigable gap (direction, width, distance)  
+**`app_config`** — the current server address
 
-The async batch writer flushes every 50 frames or 5 seconds, so the vision pipeline is never blocked by I/O.
+The server writes with the secret key from a background thread (batches of 50 frames or every 5 s).
+The admin dashboard reads directly with the admin's login; row level security lets only admins read
+session data. No camera images are stored.
 
 ---
 
-## Deployment on Google Colab
+## Development
 
-WalkSafe runs well on a free Colab GPU runtime. Expected throughput is approximately 1–2 FPS on a T4 GPU with all three models active.
-
-```python
-!git clone <repo-url>
-%cd WalkSafe
-!pip install -r requirements.txt
-!python app.py
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests                  # server tests, no GPU needed
+python scripts/dev_server.py            # app + API on http://localhost:8000 with made-up commands
 ```
 
-The `share=True` flag in `app.py` creates a public Gradio tunnel automatically.
+Put `SUPABASE_SECRET_KEY=…` in a `.env` file to have the dev server log to Supabase and manage users.
 
 ---
 
@@ -203,4 +228,6 @@ The `share=True` flag in `app.py` creates a public Gradio tunnel automatically.
 - [Apple DepthPro](https://huggingface.co/apple/DepthPro-hf) — monocular metric depth estimation
 - [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) — real-time object detection
 - [RAFT](https://github.com/princeton-vl/RAFT) (via `torchvision`) — optical flow estimation
-- [Gradio](https://www.gradio.app/) — web UI framework
+- [FastAPI](https://fastapi.tiangolo.com/) — server
+- [Supabase](https://supabase.com/) — database and sign-in
+- [cloudflared](https://github.com/cloudflare/cloudflared) — tunnel from Colab

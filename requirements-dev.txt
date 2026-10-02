@@ -1,0 +1,8 @@
+# Tests run without a GPU or the vision models.
+fastapi>=0.110
+uvicorn>=0.27
+httpx>=0.27
+pyjwt[crypto]>=2.8
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+pytest>=8
