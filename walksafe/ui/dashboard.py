@@ -127,7 +127,7 @@ def build_dashboard_content(demo):
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 def build_dashboard():
-    with gr.Blocks(title="WalkSafe Dashboard", theme=gr.themes.Default()) as demo:
+    with gr.Blocks(title="WalkSafe Dashboard") as demo:
         gr.Markdown("# WalkSafe — Research Dashboard")
         build_dashboard_content(demo)
     return demo

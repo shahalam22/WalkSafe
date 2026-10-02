@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>WalkSafe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>WalkSafe</h1>
+    <button id="toggle" class="primary" aria-describedby="status">Start guidance</button>
+    <p id="status" role="status" aria-live="polite">Ready. Use WalkSafe alongside your cane.</p>
+
+    <section id="consent" hidden aria-labelledby="consent-title">
+      <h2 id="consent-title">Send camera images?</h2>
+      <p>WalkSafe sends camera images to a server to analyse the street ahead.
+         Images are never stored; only the measurements and commands are kept.</p>
+      <button id="consent-allow">Allow</button>
+      <button id="consent-deny">Don't allow</button>
+    </section>
+
+    <section aria-label="Settings" class="settings">
+      <button id="mute" aria-pressed="false">Mute guidance</button>
+      <label>Detail
+        <select id="verbosity">
+          <option value="brief">Brief</option>
+          <option value="normal">Normal</option>
+          <option value="detailed">Detailed</option>
+        </select>
+      </label>
+      <label>Speech rate
+        <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1">
+      </label>
+    </section>
+
+    <video id="camera" playsinline muted hidden></video>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

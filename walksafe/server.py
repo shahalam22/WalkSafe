@@ -11,12 +11,12 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from walksafe import pipeline, storage
-from walksafe.config import CFG, Config, Profile
+from walksafe.config import CFG, Config, Profile, phone_js
 from walksafe.perception import Models
 from walksafe.session import Session, SessionStore
 
@@ -134,6 +134,10 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
             "confidence": d.confidence, "level": r.level, "ego_action": r.ego.action,
             "server_ms": round((time.perf_counter() - started) * 1000, 1), "timings": r.timings,
         }
+
+    @app.get("/js/config.js")
+    def phone_config():
+        return Response(phone_js(cfg), media_type="text/javascript")
 
     if WEB_DIR.is_dir():
         app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

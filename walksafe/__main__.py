@@ -2,11 +2,13 @@ import logging
 import os
 import secrets
 
-import gradio as gr
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 
-from walksafe import server, storage
-from walksafe.perception import loader
-from walksafe.ui.navigation import build_ui
+import gradio as gr  # noqa: E402
+
+from walksafe import server, storage  # noqa: E402
+from walksafe.perception import loader  # noqa: E402
+from walksafe.ui.dashboard import build_dashboard  # noqa: E402
 
 log = logging.getLogger("walksafe")
 
@@ -21,7 +23,7 @@ def main():
     if not password:
         password = secrets.token_urlsafe(9)
         log.info("Dashboard login: walksafe / %s (set WALKSAFE_DASHBOARD_PASSWORD to choose one)", password)
-    gr.mount_gradio_app(app, build_ui(models), path="/dashboard", auth=("walksafe", password))
+    gr.mount_gradio_app(app, build_dashboard(), path="/dashboard", auth=("walksafe", password))
     server.serve(app)
 
 

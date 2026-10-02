@@ -8,9 +8,10 @@ Set WALKSAFE_CONFIG to a YAML file to override values for an experiment:
 Values marked "untuned" are first guesses that still need checking against
 recorded clips.
 """
+import json
 import math
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,23 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class PhoneConfig:
+    """Values the phone page uses. It receives them as /js/config.js, generated from here."""
+    capture_fps:          float = 12.0
+    upload_width:         int   = 518
+    jpeg_quality:         float = 0.6     # about 30 KB a frame, inside NFR-15 at 2 fps
+    analysis_width:       int   = 96
+    analysis_height:      int   = 72
+    dark_max:             float = 40
+    bright_min:           float = 215
+    blur_min:             float = 30      # variance of the Laplacian at 96x72, untuned
+    stale_after_ms:       int   = 2000    # NFR-2
+    request_timeout_ms:   int   = 3000
+    max_messages_per_min: int   = 15      # NFR-13
+    step_min_interval_ms: int   = 2000    # SRS UC-4: steps no more often than every 2 s
+
+
+@dataclass(frozen=True)
 class UiConfig:
     depth_pct_low:      float = 2
     depth_pct_high:     float = 95
@@ -148,6 +166,7 @@ class Config:
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     quality:  QualityConfig  = field(default_factory=QualityConfig)
     server:   ServerConfig   = field(default_factory=ServerConfig)
+    phone:    PhoneConfig    = field(default_factory=PhoneConfig)
     ui:       UiConfig       = field(default_factory=UiConfig)
 
 
@@ -162,6 +181,11 @@ def load(path: str | None = None) -> Config:
     for section, values in overrides.items():
         cfg = replace(cfg, **{section: replace(getattr(cfg, section), **values)})
     return cfg
+
+
+def phone_js(cfg: "Config") -> str:
+    """The phone section as an ES module, so the page shares this file's values."""
+    return f"export const CONFIG = Object.freeze({json.dumps(asdict(cfg.phone), indent=2)});\n"
 
 
 CFG = load()

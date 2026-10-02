@@ -12,7 +12,7 @@ WalkSafe combines three deep learning models in a unified pipeline to help pedes
 - **YOLOv8** — real-time object detection and multi-frame tracking
 - **RAFT-Small** — optical flow estimation for ego-motion analysis
 
-The system runs in a Gradio web app accessible from any smartphone browser. It speaks navigation commands (stop, walk forward, step left, turn right, etc.) using the browser's built-in Web Speech API and logs every decision to a local SQLite database for research and analysis.
+The phone opens a web page served by the same server; there is no app to install. It speaks navigation commands (stop, walk forward, step left, turn right, etc.) using the browser's built-in Web Speech API and logs every decision to a local SQLite database for research and analysis.
 
 ---
 
@@ -27,7 +27,7 @@ The system runs in a Gradio web app accessible from any smartphone browser. It s
 | Openings | Openings at body height, measured in metres against the user's width |
 | Ego Motion Analysis | Walking speed, sideways steps and turns from optical flow and metric depth |
 | Navigation Commands | Spoken guidance: `walk_forward`, `stop`, `step_left`, `step_right`, `turn_left`, `turn_right`, `yield`, `slow_down` |
-| Fusion Visualization | Side-by-side camera / depth / flow / detection panel with annotated advisory strip |
+| Phone page | One large start/stop control, checks on the phone, earcon + speech + vibration |
 | Session Logging | All frames, agents, gaps, and decisions recorded to SQLite |
 | Analytics Dashboard | Per-session metrics, command histograms, speed profiles, and risk distributions |
 
@@ -150,20 +150,25 @@ returns 500 `{"error": "pipeline_fault"}` and the session carries on.
 
 ## Usage
 
-### Navigation Tab
+### On the phone
 
-1. Open the Gradio URL in your phone browser.
-2. Grant camera permission when prompted.
-3. Hold the phone in front of you, camera pointing ahead.
-4. The app streams frames to the server and returns:
-   - A fused visualization (camera + depth + flow + detections)
-   - A color-coded advisory strip showing the recommended command, ego action, best gap, and most critical agent
-   - A spoken navigation command via the browser's TTS
-5. Press **Reset Tracker** to end the current session and start a new one.
+1. Open the public URL in Chrome on Android (Safari on iOS also works, without vibration).
+2. Press **Start guidance**, the large button that fills most of the screen. The first time,
+   WalkSafe asks for consent to send camera images; nothing is sent without it.
+3. Allow camera access and hold the phone at chest height, camera pointing ahead.
+4. WalkSafe plays a short sound and speaks only when the command changes. A `stop`
+   interrupts anything being said and also vibrates.
+5. **Mute guidance**, **Detail** (brief, normal, detailed) and **Speech rate** can be
+   changed at any time; all are ordinary controls that work with TalkBack and VoiceOver.
+6. Press the large button again to stop.
 
-### Dashboard Tab
+The page checks each frame on the phone (too dark, too bright, blurred) and does not
+send unusable ones. It keeps one request in flight and always sends the newest frame;
+results older than 2 s, or older than one already handled, are dropped.
 
-Press **Refresh**, then select a session from the dropdown to view:
+### Dashboard
+
+Open `/dashboard`, log in, press **Refresh**, then select a session to view:
 
 - Total frames, average speed, agent encounters, critical events
 - Navigation command distribution

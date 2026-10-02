@@ -147,3 +147,25 @@ def test_no_frame_is_written_to_disk(client, tmp_path, monkeypatch):
     for seq in range(1, 4):
         send(client, sid, seq)
     assert list(tmp_path.rglob("*")) == []
+
+
+def test_phone_page_and_its_config_are_served(client):
+    page = client.get("/")
+    assert page.status_code == 200 and "Start guidance" in page.text
+    assert client.get("/js/guidance.js").status_code == 200
+    config = client.get("/js/config.js")
+    assert config.headers["content-type"].startswith("text/javascript")
+    assert '"stale_after_ms": 2000' in config.text
+
+
+def test_every_setting_the_page_reads_comes_from_config_py():
+    import re
+    from dataclasses import fields
+    from pathlib import Path
+
+    from walksafe.config import PhoneConfig
+
+    web  = Path(__file__).parents[1] / "walksafe" / "web" / "js"
+    js   = " ".join(p.read_text() for p in web.glob("*.js"))
+    used = set(re.findall(r"\b(?:cfg|CONFIG|this\.cfg)\.([a-z_]+)", js))
+    assert used and used <= {f.name for f in fields(PhoneConfig)}
