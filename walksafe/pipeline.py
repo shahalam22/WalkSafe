@@ -1,5 +1,6 @@
 """One frame through perception, interpretation and decision."""
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -31,6 +32,7 @@ class FrameResult:
     ego:       Ego
     decision:  Decision
     level:     str            # "L0", or "L1" when visibility or confidence is poor
+    timings:   dict[str, float] = field(default_factory=dict)    # milliseconds per stage
 
     @property
     def phrase(self) -> str:
@@ -49,22 +51,26 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
             cfg: Config = CFG) -> FrameResult:
     """capture_ts is in seconds on the capturing device's clock and must increase."""
     with s.lock:
+        timer = _Timer()
         s.frame_idx += 1
         frame = resize(frame_bgr, cfg.models.resize_width)
         q     = quality.check_frame(frame, cfg.quality)
         if not q.ok:
             d = decision.decide([], None, 0.0, s.profile, cfg)
             d = Decision(d.command, "poor visibility", f"frame_rejected:{q.cause} | {d.reason}", 0.0)
-            return FrameResult(frame, capture_ts, q, None, None, [], None, s.ego, d, "L1")
+            return FrameResult(frame, capture_ts, q, None, None, [], None, s.ego, d, "L1", timer.lap("quality"))
+        timer.lap("quality")
 
         prev_depth = s.depth_arr
         if s.depth_arr is None or capture_ts - s.depth_ts > cfg.models.depth_max_age_s:
             s.depth_arr = models.depth.estimate(frame) * s.profile.depth_scale
             s.depth_ts  = capture_ts
         depth = s.depth_arr
+        timer.lap("depth")
 
         boxes  = models.detector.track(frame, s.tracker)
         agents = agents_.measure(boxes, depth, capture_ts, s.tracks, s.profile, cfg.agents)
+        timer.lap("detection")
 
         flow = None
         dt   = capture_ts - s.prev_ts
@@ -76,6 +82,7 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
                 s.ego = e
                 s.speed_history = (s.speed_history + [e.speed_ms])[-cfg.ego.speed_history_len:]
         s.prev_frame, s.prev_ts = frame, capture_ts
+        timer.lap("flow")
 
         openings   = openings_.find(depth, agents, s.profile, cfg.openings)
         conf, why  = quality.confidence(agents, cfg.quality, cfg.agents)
@@ -83,4 +90,16 @@ def process(models: Models, s: Session, frame_bgr: np.ndarray, capture_ts: float
         if why:
             d = Decision(d.command, d.detail, f"{d.reason} | confidence {conf:.2f}: {why}", d.confidence)
         level = "L1" if conf < cfg.decision.confidence_low else "L0"
-        return FrameResult(frame, capture_ts, q, depth, flow, agents, openings, s.ego, d, level)
+        return FrameResult(frame, capture_ts, q, depth, flow, agents, openings, s.ego, d, level,
+                           timer.lap("rules"))
+
+
+class _Timer:
+    def __init__(self):
+        self.laps, self.last = {}, time.perf_counter()
+
+    def lap(self, name: str) -> dict[str, float]:
+        now = time.perf_counter()
+        self.laps[name] = round((now - self.last) * 1000, 1)
+        self.last = now
+        return self.laps

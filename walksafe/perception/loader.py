@@ -17,8 +17,8 @@ def load(cfg: ModelConfig = CFG.models) -> Models:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     log.info("Device: %s", device)
     models = Models(
-        depth    = DepthPro(cfg.depth_model_id, device),
-        flow     = RaftSmall(device),
+        depth    = DepthPro(cfg.depth_model_id, device, cfg.depth_fp16),
+        flow     = RaftSmall(device, cfg.flow_scale),
         detector = YoloTracker(cfg),
     )
     log.info("All models loaded")

@@ -38,6 +38,9 @@ class ModelConfig:
     agent_classes:   tuple[int, ...] = (0, 1, 2, 3, 5, 7)
     depth_max_age_s: float = 0.4          # SRS §7.3
     resize_width:    int   = 518
+    # Speed options measured by scripts/benchmark.py (NFR-4).
+    depth_fp16:      bool  = False
+    flow_scale:      float = 1.0          # RAFT runs on frames scaled by this
     # ByteTrack, with a shorter lost-track buffer than the 30-frame default
     # because frames arrive at 1-2 fps, not 30.
     track_high_thresh: float = 0.25
@@ -118,6 +121,16 @@ class QualityConfig:
 
 
 @dataclass(frozen=True)
+class ServerConfig:
+    port:            int   = 7860
+    # The phone page is served from GitHub Pages (FR-22) as well as from the server itself.
+    allowed_origins: tuple[str, ...] = ("https://shahalam22.github.io",)
+    session_idle_s:  float = 300.0
+    # Below Starlette's 1 MiB spool limit, so an upload is never written to a temporary file.
+    max_image_bytes: int   = 1_000_000
+
+
+@dataclass(frozen=True)
 class UiConfig:
     depth_pct_low:      float = 2
     depth_pct_high:     float = 95
@@ -134,6 +147,7 @@ class Config:
     openings: OpeningConfig  = field(default_factory=OpeningConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     quality:  QualityConfig  = field(default_factory=QualityConfig)
+    server:   ServerConfig   = field(default_factory=ServerConfig)
     ui:       UiConfig       = field(default_factory=UiConfig)
 
 

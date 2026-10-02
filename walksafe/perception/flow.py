@@ -9,14 +9,23 @@ log = logging.getLogger(__name__)
 
 
 class RaftSmall:
-    def __init__(self, device: str):
-        log.info("Loading RAFT-Small")
+    def __init__(self, device: str, scale: float = 1.0):
+        log.info("Loading RAFT-Small (input scale %.2f)", scale)
         weights         = Raft_Small_Weights.DEFAULT
         self.device     = device
+        self.scale      = scale
         self.transforms = weights.transforms()
         self.model      = raft_small(weights=weights).to(device).eval()
 
     def compute(self, prev_bgr: np.ndarray, curr_bgr: np.ndarray) -> np.ndarray:
+        if self.scale != 1.0:
+            H, W  = prev_bgr.shape[:2]
+            small = (int(W * self.scale), int(H * self.scale))
+            flow  = self._raft(cv2.resize(prev_bgr, small), cv2.resize(curr_bgr, small))
+            return cv2.resize(flow, (W, H)) / self.scale
+        return self._raft(prev_bgr, curr_bgr)
+
+    def _raft(self, prev_bgr, curr_bgr):
         H, W = prev_bgr.shape[:2]
         ph   = (8 - H % 8) % 8
         pw   = (8 - W % 8) % 8

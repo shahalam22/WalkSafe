@@ -21,6 +21,7 @@ ignore = ["E701", "E702", "E741"]
 testpaths = ["tests"]
 addopts = "-m 'not gpu'"
 markers = ["gpu: needs a CUDA GPU and the real model weights"]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.coverage.run]
 source = ["walksafe"]

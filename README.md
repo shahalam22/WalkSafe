@@ -117,9 +117,34 @@ matplotlib>=3.7.0
 python -m walksafe
 ```
 
-Gradio will print a local URL (and a public share link). Open the link on the device whose camera you want to use — typically a smartphone.
+This loads the models, starts the server, opens a public HTTPS tunnel and logs
+`WalkSafe is live at <url>`. One URL serves everything:
+
+| Path | What |
+|---|---|
+| `/api/session`, `/api/session/end`, `/api/frame` | The phone API (see below) |
+| `/dashboard` | Gradio dashboard, behind a login (`walksafe` / `WALKSAFE_DASHBOARD_PASSWORD`, or a generated password that is logged) |
+| `/healthz` | Health check |
 
 On first run, DepthPro and RAFT weights are downloaded automatically from Hugging Face and the `ultralytics` model hub.
+
+### Phone API
+
+`POST /api/session` with `{"purpose": "walk", "profile": {...}}` returns
+`{"session_id"}`; it is refused (403) without consent to send images.
+`POST /api/frame` takes multipart fields `session_id`, `seq`, `capture_ts`
+(phone clock, ms) and `image` (JPEG, 518 px wide) and returns
+
+```json
+{"seq": 42, "capture_ts": 1759400000123.4, "command": "step_right",
+ "detail": "opening on your right", "phrase": "Step right", "reason": "R8 opening_beside width=1.10m ...",
+ "confidence": 0.82, "level": "L0", "ego_action": "walking_forward",
+ "server_ms": 412.0, "timings": {"quality": 2.1, "depth": 300.4, "detection": 25.0, "flow": 80.2, "rules": 1.3}}
+```
+
+Frames older than the last one handled are refused (409); a frame that arrives
+while the session is still busy is refused (429) rather than queued; a fault
+returns 500 `{"error": "pipeline_fault"}` and the session carries on.
 
 ---
 
@@ -187,14 +212,8 @@ The async batch writer flushes every 50 frames or 5 seconds, so the vision pipel
 
 WalkSafe runs well on a free Colab GPU runtime. Expected throughput is approximately 1–2 FPS on a T4 GPU with all three models active.
 
-```python
-!git clone <repo-url>
-%cd WalkSafe
-!pip install -r requirements.txt
-!python -m walksafe
-```
-
-The `share=True` flag in `walksafe/__main__.py` creates a public Gradio tunnel automatically.
+Open [run_on_colab.ipynb](run_on_colab.ipynb) in Colab and run its three cells
+(clone, install, run). The last cell prints the public URL.
 
 ---
 
