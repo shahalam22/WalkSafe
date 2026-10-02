@@ -26,3 +26,11 @@ def test_yaml_override_changes_only_the_named_value(tmp_path):
 def test_no_override_without_a_path(monkeypatch):
     monkeypatch.delenv("WALKSAFE_CONFIG", raising=False)
     assert load() == CFG
+
+
+def test_depth_model_can_be_picked_by_name(monkeypatch):
+    monkeypatch.delenv("WALKSAFE_CONFIG", raising=False)
+    monkeypatch.setenv("WALKSAFE_DEPTH_MODEL", "depthpro")
+    assert load().models.depth_model_id == "apple/DepthPro-hf"
+    monkeypatch.setenv("WALKSAFE_DEPTH_MODEL", "indoor")
+    assert "Indoor" in load().models.depth_model_id

@@ -37,7 +37,7 @@ class ModelConfig:
     # DepthPro ("apple/DepthPro-hf") took about 6.6 s a frame on a Colab T4, far too slow
     # for guidance; Depth Anything V2 Metric (outdoor, up to 80 m) is much smaller.
     # "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf" suits indoor testing.
-    depth_model_id:  str   = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf"
+    depth_model_id:  str   = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf"   # see DEPTH_MODELS
     yolo_model:      str   = "yolov8n.pt"
     yolo_conf:       float = 0.35
     # COCO ids for the agents FR-3 names: person, bicycle, car, motorcycle, bus, truck.
@@ -234,8 +234,19 @@ class Config:
     ui:       UiConfig       = field(default_factory=UiConfig)
 
 
+DEPTH_MODELS = {
+    "outdoor":  "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf",
+    "indoor":   "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+    "depthpro": "apple/DepthPro-hf",
+}
+
+
 def load(path: str | None = None) -> Config:
-    cfg  = Config()
+    cfg = Config()
+    # WALKSAFE_DEPTH_MODEL picks a depth model by name (outdoor, indoor, depthpro).
+    depth = os.environ.get("WALKSAFE_DEPTH_MODEL")
+    if depth:
+        cfg = replace(cfg, models=replace(cfg.models, depth_model_id=DEPTH_MODELS.get(depth, depth)))
     path = path or os.environ.get("WALKSAFE_CONFIG")
     if not path:
         return cfg
