@@ -51,6 +51,23 @@ class SessionEnd(BaseModel):
     reason:     str = Field("user", max_length=32)
 
 
+class EventIn(BaseModel):
+    type:        Literal["level_change", "phone_stop", "delivery", "battery"]
+    occurred_at: float | None = None          # phone clock, ms
+    seq:         int | None   = None
+    cause:       str          = Field("", max_length=64)
+    from_level:  str | None   = Field(None, max_length=4)
+    to_level:    str | None   = Field(None, max_length=4)
+    outcome:     str | None   = Field(None, max_length=16)
+    spoken_at:   float | None = None
+    ttc_s:       float | None = None
+
+
+class EventBatch(BaseModel):
+    session_id: str
+    events:     list[EventIn] = Field(max_length=CFG.phone.max_queued_events)
+
+
 def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
     app      = FastAPI(title="WalkSafe", docs_url=None, redoc_url=None, openapi_url=None)
     sessions = SessionStore(cfg.server.session_idle_s)
@@ -80,6 +97,15 @@ def create_app(models: Models, cfg: Config = CFG, clock=time.time) -> FastAPI:
             raise HTTPException(404, "unknown_session")
         log.info("Session %s ended (%s)", req.session_id[:8], req.reason)
         return {"ok": True}
+
+    @app.post("/api/event")
+    def events(req: EventBatch):
+        if sessions.get(req.session_id) is None:
+            raise HTTPException(404, "unknown_session")
+        for e in req.events:
+            if e.type == "level_change":
+                log.info("Session %s: %s -> %s (%s)", req.session_id[:8], e.from_level, e.to_level, e.cause)
+        return {"ok": True, "accepted": len(req.events)}
 
     @app.post("/api/frame")
     async def frame(request: Request):

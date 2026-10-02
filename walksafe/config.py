@@ -161,6 +161,16 @@ class PhoneConfig:
     ttc_clear_s:            float = 2.5
     stop_frames:            int   = 3
     clear_frames:           int   = 5
+    # Capability levels (SRS §2.2, FR-18 to FR-20)
+    server_silent_ms:       int   = 2000
+    announce_repeat_ms:     int   = 60000
+    fault_onset_ms:         int   = 1000    # a fault must last this long before the level drops
+    fault_clear_ms:         int   = 3000    # and be gone this long before it recovers
+    check_dead_ms:          int   = 1000    # the on-phone check has not run for this long
+    battery_warn_levels:    tuple[float, ...] = (0.20, 0.10)
+    battery_end_level:      float = 0.05
+    event_flush_ms:         int   = 5000
+    max_queued_events:      int   = 500
 
 
 @dataclass(frozen=True)

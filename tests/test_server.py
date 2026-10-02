@@ -169,3 +169,17 @@ def test_every_setting_the_page_reads_comes_from_config_py():
     js   = " ".join(p.read_text() for p in web.glob("*.js"))
     used = set(re.findall(r"\b(?:cfg|CONFIG|this\.cfg)\.([a-z_]+)", js))
     assert used and used <= {f.name for f in fields(PhoneConfig)}
+
+
+def test_events_are_accepted_for_a_live_session(client):
+    sid = start(client)
+    batch = {"session_id": sid, "events": [
+        {"type": "level_change", "occurred_at": 1.0, "cause": "server not responding",
+         "from_level": "L0", "to_level": "L2"},
+        {"type": "delivery", "seq": 3, "outcome": "spoken", "spoken_at": 2.0},
+        {"type": "phone_stop", "occurred_at": 3.0, "ttc_s": 1.1},
+    ]}
+    assert client.post("/api/event", json=batch).json() == {"ok": True, "accepted": 3}
+    assert client.post("/api/event", json={**batch, "session_id": "nope"}).status_code == 404
+    bad = {"session_id": sid, "events": [{"type": "selfie"}]}
+    assert client.post("/api/event", json=bad).status_code == 422

@@ -171,6 +171,25 @@ in a row, the phone says `stop` at once, and no server command is spoken until t
 scene stops closing in. It keeps one request in flight and always sends the newest frame;
 results older than 2 s, or older than one already handled, are dropped.
 
+### Capability levels
+
+The page never fails silently (FR-18, FR-19, NFR-7). It tracks what is working and
+speaks every change with its cause, repeats a reduced level every minute, and
+announces recovery:
+
+| Level | When | What the user gets |
+|---|---|---|
+| L0 | Everything working | Full guidance |
+| L1 | Frames too dark, bright or blurred, or the server unsure of the view | Cautious commands only |
+| L2 | No answer from the server for 2 s, or images not being sent | Obstacle warnings from the phone only |
+| L3 | The on-phone obstacle check cannot see or has stopped | Guidance stopped; no commands |
+| L4 | Battery nearly empty, or the user ends the session | Shutdown announced with the reason |
+
+A fault must last 1 s before the level drops and be gone 3 s before it recovers.
+Battery warnings come at 20 % and 10 % where the browser reports the battery
+(Chrome on Android). If the user declines to send images, WalkSafe runs in
+phone-only mode at L2.
+
 ### Dashboard
 
 Open `/dashboard`, log in, press **Refresh**, then select a session to view:

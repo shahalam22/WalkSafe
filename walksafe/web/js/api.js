@@ -45,6 +45,10 @@ export class Api {
     return this.postJson("/api/session/end", { session_id: sessionId, reason });
   }
 
+  postEvents(sessionId, events) {
+    return this.postJson("/api/event", { session_id: sessionId, events });
+  }
+
   sendFrame(sessionId, seq, captureTs, blob) {
     const form = new FormData();
     form.append("session_id", sessionId);
@@ -57,11 +61,13 @@ export class Api {
 
 // Sends frames one after another until stopped. grab() is called only when the
 // previous request has finished, so whatever goes out is the newest frame.
-export async function uploadLoop({ api, sessionId, grab, onResult, onError, running, retryMs = 1000 }) {
+export async function uploadLoop({ api, sessionId, grab, onResult, onError, running,
+                                   onSent = () => {}, retryMs = 1000 }) {
   let seq = 0;
   while (running()) {
     const frame = await grab();
     if (!frame) { await sleep(100); continue; }
+    onSent();
     try {
       onResult(await api.sendFrame(sessionId, ++seq, frame.ts, frame.blob));
     } catch (e) {

@@ -6,6 +6,13 @@
 const URGENT = new Set(["stop", "yield"]);
 const HAZARD = new Set(["stop", "yield", "slow_down"]);
 
+// At L1 only the cautious end of SRS §2.4 is allowed (FR-10).
+const CAUTIOUS = new Set(["stop", "yield", "slow_down", "walk_forward_slow"]);
+export const downgrade = (command) =>
+  CAUTIOUS.has(command) ? command : command === "walk_forward" ? "walk_forward_slow" : "slow_down";
+
+const DOWNGRADED_PHRASE = { walk_forward_slow: "Walk forward slowly", slow_down: "Slow down" };
+
 export const VIBRATION = {
   stop:  [200, 100, 200, 100, 200],
   yield: [300],
@@ -25,6 +32,7 @@ export class Guidance {
     this.spokenAt = [];
     this.phoneStopActive = false;
     this.phoneClearedAt = -Infinity;
+    this.level = "L0";
   }
 
   // The expansion check sees something closing in. Kept to one word: it has
@@ -44,6 +52,10 @@ export class Guidance {
   }
 
   serverResult(r) {
+    if (this.level === "L1" && !CAUTIOUS.has(r.command)) {
+      const command = downgrade(r.command);
+      r = { ...r, command, phrase: DOWNGRADED_PHRASE[command] };
+    }
     const outcome = this.judge(r);
     if (outcome === "spoken") this.say(r.command, this.text(r.phrase, r.detail, r.command));
     else if (outcome === "muted" && URGENT.has(r.command)) this.output.vibrate(VIBRATION[r.command]);
@@ -56,6 +68,7 @@ export class Guidance {
     if (r.seq <= this.lastSeq) return "out_of_order";
     this.lastSeq = r.seq;
     if (now - r.capture_ts > this.cfg.stale_after_ms) return "stale";
+    if (this.level === "L3" || this.level === "L4") return "suppressed";     // guidance has stopped
     if (this.phoneStopActive || r.capture_ts < this.phoneClearedAt) return "overridden";
     if (r.command === this.lastSpoken) return "repeat";
     if (this.muted) return "muted";
