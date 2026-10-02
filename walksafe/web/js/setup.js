@@ -65,11 +65,12 @@ async function aimCheck({ ask, pitch, cfg }) {
   return (await pitch()) ?? 0;
 }
 
-async function depthCheck({ ask, say, api, grab }, sessionId) {
+async function depthCheck(ctx, sessionId) {
+  const { ask, say, api } = ctx;
   for (;;) {
     const known = Number(await ask(DISTANCE, ["1.5", "1", "2", "3"].map((m) => ({ key: m, label: `${m} metres` }))));
     await ask(FACE_WALL, [{ key: "ready", label: "Ready" }]);
-    const frame = await grab();
+    const frame = await nextFrame(ctx);
     const r = await api.depthCheck(sessionId, known, frame.blob);
     if (r.passed) {
       say(`Depth check passed. The wall measured ${r.measured_m} metres.`);
@@ -100,6 +101,14 @@ async function directionTest(ctx, sessionId) {
     const next = await ctx.ask("The step was not clear. Try again?",
                                [{ key: "retry", label: "Try again" }, { key: "stop", label: "Stop setup" }]);
     if (next === "stop") throw new SetupRejected("the direction test did not pass");
+  }
+}
+
+async function nextFrame({ grab, sleep }) {
+  for (;;) {
+    const frame = await grab();
+    if (frame) return frame;
+    await sleep(50);               // the camera has not delivered a frame yet
   }
 }
 

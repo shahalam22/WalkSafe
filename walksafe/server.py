@@ -36,7 +36,7 @@ class ProfileIn(BaseModel):
     consent_send_images:   bool  = False
     camera_fov_deg:        float = Field(CFG.profile.camera_fov_deg, ge=30, le=120)
     mount_height_m:        float = Field(1.3, ge=0.5, le=2.0)
-    mount_pitch_deg:       float = Field(0.0, ge=-60, le=60)
+    mount_pitch_deg:       float = Field(0.0, ge=-90, le=90)
     shoulder_width_m:      float = Field(CFG.profile.shoulder_width_m, ge=0.25, le=0.8)
     clearance_margin_m:    float = Field(CFG.profile.clearance_margin_m, ge=0.0, le=0.6)
     depth_scale:           float = Field(CFG.profile.depth_scale, ge=0.5, le=2.0)
@@ -122,10 +122,16 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
         return {"ok": True, "accepted": len(req.events)}
 
     async def read_form(request: Request, **fields):
-        # Check the size before parsing: larger uploads would be spooled to a temporary file.
-        size = int(request.headers.get("content-length") or 0)
-        if not 0 < size <= cfg.server.max_image_bytes:
+        # Read the body with a cap before parsing: a larger upload would be spooled
+        # to a temporary file. Not every proxy keeps the Content-Length header.
+        if int(request.headers.get("content-length") or 0) > cfg.server.max_image_bytes:
             raise HTTPException(413, "image_too_large")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > cfg.server.max_image_bytes:
+                raise HTTPException(413, "image_too_large")
+        request._body = body                 # Starlette parses the form from this
         form = await request.form()
         try:
             values = {name: kind(form[name]) for name, kind in fields.items()}
@@ -215,9 +221,12 @@ def create_app(models: Models, writer: LogWriter | None = None, cfg: Config = CF
     def phone_config():
         return Response(phone_js(cfg), media_type="text/javascript")
 
-    if WEB_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app
+
+
+def add_phone_page(app: FastAPI) -> None:
+    """Serve the phone page at /. Call this last: it answers every path not taken yet."""
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
 def check_depth(depth: np.ndarray, known_m: float, fov_deg: float | None, cfg: SetupConfig = CFG.setup) -> dict:

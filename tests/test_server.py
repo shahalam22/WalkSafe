@@ -150,6 +150,8 @@ def test_no_frame_is_written_to_disk(client, tmp_path, monkeypatch):
 
 
 def test_phone_page_and_its_config_are_served(client):
+    from walksafe.server import add_phone_page
+    add_phone_page(client.app)
     page = client.get("/")
     assert page.status_code == 200 and "Start guidance" in page.text
     assert client.get("/js/guidance.js").status_code == 200
@@ -272,3 +274,30 @@ def test_live_panel_is_kept_in_memory_only_when_switched_on(clock):
         send(client, sid, 1)
         panel = client.app.state.sessions.get(sid).panel
         assert (panel is not None and panel[:2] == b"\xff\xd8") == expect
+
+
+def test_dashboard_and_phone_page_are_both_reachable(tmp_path, clock):
+    import gradio as gr
+
+    from walksafe.server import add_phone_page
+    from walksafe.ui.dashboard import build_dashboard
+    app = create_app(fake_models(), clock=clock)
+    gr.mount_gradio_app(app, build_dashboard(str(tmp_path / "w.db")), path="/dashboard", auth=("walksafe", "pw"))
+    add_phone_page(app)
+    c = TestClient(app)
+    assert c.get("/").status_code == 200
+    assert c.get("/dashboard/").status_code == 200
+    assert c.get("/server.json").json() == {"url": ""}
+
+
+def test_upload_without_content_length_is_read_with_a_cap(client):
+    sid = start(client)
+    boundary = "xyz"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"session_id\"\r\n\r\n{sid}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"seq\"\r\n\r\n1\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"capture_ts\"\r\n\r\n1000\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"f.jpg\"\r\n"
+            f"Content-Type: image/jpeg\r\n\r\n").encode() + jpeg() + f"\r\n--{boundary}--\r\n".encode()
+    chunks = lambda: iter([body[:1000], body[1000:]])  # noqa: E731  (streamed: no Content-Length)
+    r = client.post("/api/frame", content=chunks(), headers={"content-type": f"multipart/form-data; boundary={boundary}"})
+    assert r.status_code == 200 and r.json()["seq"] == 1

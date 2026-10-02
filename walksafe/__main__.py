@@ -27,6 +27,7 @@ def main():
         log.info("Dashboard login: walksafe / %s (set WALKSAFE_DASHBOARD_PASSWORD to choose one)", password)
     dashboard = build_dashboard(CFG.storage.db_path, app.state.sessions)
     gr.mount_gradio_app(app, dashboard, path="/dashboard", auth=("walksafe", password))
+    server.add_phone_page(app)
     server.serve(app)
 
 

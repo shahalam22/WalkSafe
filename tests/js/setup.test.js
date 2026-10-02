@@ -107,3 +107,12 @@ test("direction verdicts", () => {
   assert.equal(judgeDirection(["stepping_left", "stepping_right"]), "unclear");
   assert.equal(judgeDirection([]), "unclear");
 });
+
+test("the depth check waits for the camera's first frame", async () => {
+  const { ctx } = setup({ answers: HAPPY });
+  let calls = 0;
+  const grab = ctx.grab;
+  ctx.grab = async () => (++calls < 3 ? null : grab());
+  const p = await runSetup(ctx);
+  assert.equal(p.depth_check_passed, true);
+});

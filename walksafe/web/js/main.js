@@ -1,6 +1,6 @@
 // Wires the page together: the start/stop control, the camera, the checks on
 // the phone, the upload loop, guidance and the capability level.
-import { Api, findServer, sleep, uploadLoop } from "./api.js";
+import { Api, ApiError, findServer, sleep, uploadLoop } from "./api.js";
 import { Capability } from "./capability.js";
 import { clockMs, closeCamera, FrameGrabber, openCamera } from "./capture.js";
 import { CONFIG } from "./config.js";
@@ -156,14 +156,23 @@ async function setup() {
     });
     save("walksafe.profile", profile);
   } catch (e) {
-    const why = e instanceof SetupRejected ? e.message : "the server could not be reached";
-    announce(`Setup did not finish: ${why}. Press the large button to try again.`, { urgent: true });
+    console.error(e);
+    announce(`Setup did not finish: ${describeError(e)}. Press the large button to try again.`, { urgent: true });
   } finally {
     closeCamera(stream);
     $("setup").hidden = true;
     $("toggle").hidden = false;
     $("toggle").focus();
   }
+}
+
+function describeError(e) {
+  if (e instanceof SetupRejected) return e.message;
+  if (e instanceof ApiError) {
+    return e.status === 0 ? `the server could not be reached (${e.detail})`
+                          : `the server refused the request (${e.status} ${e.detail})`;
+  }
+  return `an error on the phone (${e.message})`;
 }
 
 // One question, answered with buttons; the first is the large one.
