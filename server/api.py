@@ -16,6 +16,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 import cv2
@@ -102,6 +103,7 @@ class NewUser(BaseModel):
     email:        str = Field(max_length=254)
     password:     str = Field(min_length=6, max_length=72)
     display_name: str = Field("", max_length=80)
+    role:         Literal["blind", "admin"] = Field("blind", description='"blind" (a user who walks) or "admin"')
 
 
 class UserChange(BaseModel):
@@ -160,7 +162,7 @@ _ADMIN_ERRORS = {**_AUTH_ERRORS, 403: {"model": Error, "description": "Not an ad
 _TAGS = [
     {"name": "health", "description": "Is the server up and ready"},
     {"name": "guidance", "description": "A walk: start a session, send camera frames, stop"},
-    {"name": "admin", "description": "Blind-user accounts (admin login only)"},
+    {"name": "admin", "description": "User and admin accounts (admin login only)"},
 ]
 
 _DESCRIPTION = """
@@ -297,7 +299,7 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
             "view":      base64.b64encode(result["view"]).decode() if result.get("view") else None,
         }
 
-    # ── Admin: blind-user accounts ────────────────────────────────────────────
+    # ── Admin: accounts ───────────────────────────────────────────────────────
 
     def supabase_call(fn, *args, **kwargs):
         try:
@@ -314,13 +316,13 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
         return rows[0]
 
     @app.post("/api/admin/users", status_code=201, tags=["admin"], response_model=CreatedUser,
-              summary="Add a blind user",
+              summary="Add a blind user or an admin",
               responses={**_ADMIN_ERRORS, 400: {"model": Error, "description": "e.g. email already registered"}})
     def create_user(req: NewUser, admin: User = Depends(admin_user)):
         email = req.email.strip().lower()
         if not _EMAIL.match(email):
             raise HTTPException(422, "bad_email")
-        u = supabase_call(db.create_user, email, req.password, "blind",
+        u = supabase_call(db.create_user, email, req.password, req.role,
                           req.display_name.strip() or email)
         return {"id": u["id"], "email": u.get("email", email)}
 

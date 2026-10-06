@@ -1,7 +1,7 @@
 // Keeps the app opening without a network (it then says the server is offline).
 // Pages and scripts: network first, so a new version shows at once.
 // The Supabase library from the CDN: cache first. API calls are never cached.
-const CACHE = "walksafe-v2";
+const CACHE = "walksafe-v3";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/config.js", "js/supabase.js", "js/ui.js", "js/server.js",

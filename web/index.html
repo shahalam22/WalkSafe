@@ -34,8 +34,40 @@
       <label>Password
         <input id="login-password" type="password" autocomplete="current-password" required>
       </label>
+      <p id="login-notice" class="ok" role="status" hidden></p>
       <p id="login-error" class="error" role="alert" hidden></p>
       <button type="submit" class="btn primary" id="login-submit">Sign in</button>
+      <button type="button" class="link-btn" id="login-forgot" hidden>Forgot password?</button>
+    </form>
+
+    <form id="forgot-form" class="card login-card" hidden>
+      <span class="logo" aria-hidden="true"></span>
+      <h1 class="brand">Reset password</h1>
+      <p class="muted">Enter the account's email. We will send a link to choose a new password.</p>
+      <label>Email
+        <input id="forgot-email" type="email" autocomplete="username" required>
+      </label>
+      <p id="forgot-msg" role="status" hidden></p>
+      <button type="submit" class="btn primary" id="forgot-submit">Send Reset Link</button>
+      <button type="button" class="link-btn" id="forgot-back">Back to sign in</button>
+    </form>
+  </main>
+
+  <!-- New password (opened from the reset link in the email) -->
+  <main id="reset" data-screen class="screen center-screen" hidden>
+    <form id="reset-form" class="card login-card">
+      <span class="logo" aria-hidden="true"></span>
+      <h1 class="brand">New password</h1>
+      <p class="muted" id="reset-who">Choose a new password for your account.</p>
+      <label>New Password
+        <input id="reset-password" type="password" autocomplete="new-password" minlength="6" maxlength="72" required>
+      </label>
+      <label>Confirm New Password
+        <input id="reset-confirm" type="password" autocomplete="new-password" minlength="6" maxlength="72" required>
+      </label>
+      <p id="reset-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="btn primary" id="reset-submit">Reset password</button>
+      <button type="button" class="link-btn" id="reset-cancel">Cancel</button>
     </form>
   </main>
 
@@ -152,7 +184,13 @@
 
     <section id="tab-users" class="tab-panel" role="tabpanel" hidden>
       <form id="user-form" class="card form-grid">
-        <h2 class="card-title">Add a blind user</h2>
+        <h2 class="card-title">Add a user</h2>
+        <label>User type
+          <select id="nu-role">
+            <option value="blind">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
         <label>Name <input id="nu-name" maxlength="80" placeholder="e.g. Rahim"></label>
         <label>Email <input id="nu-email" type="email" required placeholder="used to sign in"></label>
         <label>Password <input id="nu-password" type="text" minlength="6" required placeholder="at least 6 characters"></label>

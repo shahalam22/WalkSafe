@@ -201,6 +201,8 @@ def test_admin_creates_and_manages_blind_user(env):
     assert r.status_code == 400 and "already" in r.json()["detail"]
     assert client.post("/api/admin/users", json={"email": "bad", "password": "secret1"}, headers=h).status_code == 422
     assert client.post("/api/admin/users", json={"email": "a@b.co", "password": "123"}, headers=h).status_code == 422
+    assert client.post("/api/admin/users", json={"email": "a@b.co", "password": "secret1", "role": "owner"},
+                       headers=h).status_code == 422
 
     uid = str(uuid.uuid4())
     db.profiles[uid] = {"id": uid, "role": "blind"}
@@ -213,6 +215,14 @@ def test_admin_creates_and_manages_blind_user(env):
     db.profiles[admin_id] = {"id": admin_id, "role": "admin"}
     assert client.delete(f"/api/admin/users/{admin_id}", headers=h).status_code == 403
     assert client.delete(f"/api/admin/users/{uuid.uuid4()}", headers=h).status_code == 404
+
+
+def test_admin_creates_another_admin(env):
+    client, db, *_ = env
+    r = client.post("/api/admin/users", json={"email": "karim@x.org", "password": "secret1",
+                                              "display_name": "Karim", "role": "admin"}, headers=auth(token("admin")))
+    assert r.status_code == 201
+    assert db.calls[-1] == ("create", "karim@x.org", "admin", "Karim")
 
 
 def test_cors_preflight_from_app_page(env):

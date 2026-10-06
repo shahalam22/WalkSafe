@@ -120,6 +120,12 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .login-card { width: min(380px, calc(100vw - 32px)); display: grid; gap: 14px; text-align: left; }
 .login-card .brand { text-align: center; }
 .login-card > .muted { text-align: center; margin: 0; }
+.login-card > p[role] { margin: 0; }
+.link-btn {
+  font: inherit; font-size: 0.95rem; cursor: pointer; justify-self: center;
+  min-height: 44px; padding: 8px 12px; border: 0; background: none;
+  color: var(--accent); text-decoration: underline; text-underline-offset: 3px;
+}
 
 /* ── Guidance screen ──────────────────────────────────────────────────────── */
 /* Always black: nothing to read for the user, little power on OLED screens. */

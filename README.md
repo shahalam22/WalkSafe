@@ -139,7 +139,13 @@ Risk levels assigned to each tracked agent:
 
 1. Run [supabase/schema.sql](supabase/schema.sql) in the Supabase SQL Editor (safe to run again).
 2. Authentication → Sign In / Providers: turn **off** "Allow new users to sign up".
-3. Create the admin in Authentication → Users, then mark it admin (see the end of `schema.sql`).
+3. Create the first admin in Authentication → Users, then mark it admin (see the end of `schema.sql`).
+   More admins and users are added from the dashboard's **Users** tab (pick the user type).
+4. Authentication → URL Configuration, for the "Forgot password?" emails: set **Site URL** to the
+   app page (`https://shahalam22.github.io/walksafe-app/`) and add both of these to **Redirect URLs**:
+   `https://shahalam22.github.io/walksafe-app/**` (web app) and `walksafe://reset-password` (Android app).
+   Supabase's built-in email sender only sends a few emails an hour; set up custom SMTP
+   (Authentication → Emails) if more people will reset passwords.
 
 ### 2. The server (each time, on Colab)
 

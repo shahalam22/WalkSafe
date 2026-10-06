@@ -1,5 +1,5 @@
 // Admin pages: session data (read straight from Supabase, so it works while the
-// server is off), blind-user accounts (through the server, which holds the
+// server is off), user and admin accounts (through the server, which holds the
 // secret key), and the server address.
 import { barChart, lineChart, tiles } from "./charts.js";
 import { api, cleanUrl, explain, health, loadServerUrl, saveServerUrl } from "./server.js";
@@ -191,10 +191,13 @@ async function createUser(e) {
   msg.textContent = "Adding…";
   try {
     const base = await serverBase();
+    const role = $("#nu-role").value;
     await api(base, "/api/admin/users", { json: {
-      email: $("#nu-email").value, password: $("#nu-password").value, display_name: $("#nu-name").value,
+      email: $("#nu-email").value, password: $("#nu-password").value, display_name: $("#nu-name").value, role,
     } });
-    msg.textContent = `Added ${$("#nu-email").value}. Sign in with it on their phone.`;
+    msg.textContent = role === "admin"
+      ? `Added ${$("#nu-email").value} as an admin. They can sign in to this dashboard.`
+      : `Added ${$("#nu-email").value}. Sign in with it on their phone.`;
     msg.className = "small ok";
     $("#user-form").reset();
     await loadUsers();
