@@ -103,6 +103,11 @@ tests/                  # Server tests (no GPU needed)
 
 The models are shared, so one guidance session runs at a time. A session with no frames for 60 s is closed.
 
+**Interactive API docs:** open `<server address>/docs` (Swagger UI) or `/redoc`; the OpenAPI schema is at
+`/openapi.json`. To try the protected calls, press **Authorize** and paste a Supabase `access_token`
+(sign in with `POST <supabase-url>/auth/v1/token?grant_type=password`, header `apikey: <publishable key>`).
+Turn the docs off with `SERVER["api_docs"] = False` in [config.py](config.py).
+
 ---
 
 ## Navigation Decision Logic

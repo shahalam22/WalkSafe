@@ -3,6 +3,9 @@
 Every call except /api/health needs a Supabase login token. The models and
 their tracking state are shared, so one guidance session runs at a time: a new
 session ends the one before it.
+
+Interactive API docs (Swagger UI) are at /docs, ReDoc at /redoc and the
+OpenAPI schema at /openapi.json, unless SERVER["api_docs"] is off.
 """
 import asyncio
 import base64
@@ -17,9 +20,10 @@ from uuid import UUID
 
 import cv2
 import numpy as np
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -91,7 +95,7 @@ class Sessions:
 
 
 class FrameAck(BaseModel):
-    session_id: str
+    session_id: str = Field(description="The id /api/session/start returned")
 
 
 class NewUser(BaseModel):
@@ -101,9 +105,74 @@ class NewUser(BaseModel):
 
 
 class UserChange(BaseModel):
+    """Only the fields that are sent are changed."""
     display_name: str | None = Field(None, max_length=80)
     password:     str | None = Field(None, min_length=6, max_length=72)
-    active:       bool | None = None
+    active:       bool | None = Field(None, description="false turns the account off (it can no longer sign in)")
+
+
+# ── Response shapes (for the API docs) ───────────────────────────────────────
+
+class Error(BaseModel):
+    detail: str = Field(description="A short reason, e.g. login_required, session_ended, models_loading")
+
+
+class Health(BaseModel):
+    ok:          bool
+    app:         str  = Field(description='Always "walksafe"')
+    version:     str
+    ready:       bool = Field(description="The vision models are loaded")
+    busy:        bool = Field(description="A guidance session is running")
+    log_dropped: int  = Field(description="Log rows dropped because the database was unreachable")
+
+
+class SessionStarted(BaseModel):
+    session_id: str
+
+
+class SessionStopped(BaseModel):
+    stopped: bool = Field(description="false if that session was not the running one")
+
+
+class FrameResult(BaseModel):
+    frame_idx: int
+    command:   str = Field(description="e.g. walk_forward, stop, step_left, turn_right, yield, slow_down")
+    phrase:    str = Field(description="What the phone says, e.g. \"Step left\"")
+    detail:    str
+    agents:    int = Field(description="Objects detected in this frame")
+    critical:  int = Field(description="Of those, how many are a critical risk")
+    server_ms: int = Field(description="Time the pipeline took on the server")
+    view:      str | None = Field(None, description="Base64 JPEG of the analysis panel, only with view=1")
+
+
+class CreatedUser(BaseModel):
+    id:    str
+    email: str
+
+
+class Ok(BaseModel):
+    ok: bool
+
+
+_AUTH_ERRORS = {401: {"model": Error, "description": "No login token, or it expired"}}
+_ADMIN_ERRORS = {**_AUTH_ERRORS, 403: {"model": Error, "description": "Not an admin, or the target is an admin"}}
+
+_TAGS = [
+    {"name": "health", "description": "Is the server up and ready"},
+    {"name": "guidance", "description": "A walk: start a session, send camera frames, stop"},
+    {"name": "admin", "description": "Blind-user accounts (admin login only)"},
+]
+
+_DESCRIPTION = """
+The WalkSafe server: camera frames in, spoken navigation commands out.
+
+**Signing in:** every call except `/api/health` needs a Supabase login token.
+Sign in to the WalkSafe app, or get one from Supabase Auth
+(`POST <supabase-url>/auth/v1/token?grant_type=password`), then press
+**Authorize** and paste the `access_token`.
+
+One guidance session runs at a time; starting a new one ends the one before it.
+"""
 
 
 def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
@@ -122,8 +191,13 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
         yield
         task.cancel()
 
-    app = FastAPI(title="WalkSafe", version=VERSION, lifespan=lifespan,
-                  docs_url=None, redoc_url=None, openapi_url=None)
+    docs = SERVER.get("api_docs", True)
+    app = FastAPI(title="WalkSafe API", version=VERSION, lifespan=lifespan,
+                  description=_DESCRIPTION, openapi_tags=_TAGS,
+                  docs_url="/docs" if docs else None,
+                  redoc_url="/redoc" if docs else None,
+                  openapi_url="/openapi.json" if docs else None,
+                  swagger_ui_parameters={"persistAuthorization": True})
     app.state.sessions = sessions
     # The app page lives on another address (GitHub Pages), so allow cross-origin
     # calls. Logins travel in the Authorization header, never in cookies.
@@ -131,12 +205,14 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
                        allow_methods=["GET", "POST", "PATCH", "DELETE"],
                        allow_headers=["Authorization", "Content-Type"], max_age=600)
 
-    def current_user(request: Request) -> User:
-        header = request.headers.get("authorization", "")
-        if not header.lower().startswith("bearer "):
+    # HTTPBearer also gives the API docs their "Authorize" button.
+    bearer = HTTPBearer(auto_error=False, description="A Supabase login token (access_token)")
+
+    def current_user(creds: HTTPAuthorizationCredentials | None = Security(bearer)) -> User:
+        if creds is None or not creds.credentials:
             raise HTTPException(401, "login_required")
         try:
-            return verifier.verify(header[7:].strip())
+            return verifier.verify(creds.credentials.strip())
         except AuthError as e:
             raise HTTPException(401, "login_expired") from e
 
@@ -147,7 +223,7 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
 
     # ── Health ────────────────────────────────────────────────────────────────
 
-    @app.get("/api/health")
+    @app.get("/api/health", tags=["health"], response_model=Health, summary="Server status")
     def health():
         return {"ok": True, "app": "walksafe", "version": VERSION,
                 "ready": bool(is_ready()), "busy": sessions.active is not None,
@@ -155,8 +231,14 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
 
     # ── Guidance ──────────────────────────────────────────────────────────────
 
-    @app.post("/api/session/start")
+    @app.post("/api/session/start", tags=["guidance"], response_model=SessionStarted,
+              summary="Start a guidance session",
+              responses={**_AUTH_ERRORS,
+                         403: {"model": Error, "description": "account_disabled"},
+                         503: {"model": Error, "description": "models_loading"}})
     async def start_session(user: User = Depends(current_user)):
+        """Clears the pipeline's tracking state and starts logging a new session.
+        Any session that was running is ended (reason "replaced")."""
         if not is_ready():
             raise HTTPException(503, "models_loading")
         try:
@@ -168,13 +250,28 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
         sid = await run_in_threadpool(sessions.start, user.id)
         return {"session_id": sid}
 
-    @app.post("/api/session/stop")
+    @app.post("/api/session/stop", tags=["guidance"], response_model=SessionStopped,
+              summary="End a guidance session", responses=_AUTH_ERRORS)
     def stop_session(req: FrameAck, user: User = Depends(current_user)):
         return {"stopped": sessions.stop(req.session_id)}
 
-    @app.post("/api/frame")
-    async def frame(request: Request, session_id: str, view: bool = False,
+    @app.post(
+        "/api/frame", tags=["guidance"], response_model=FrameResult,
+        summary="Send one camera frame, get the command",
+        responses={**_AUTH_ERRORS,
+                   409: {"model": Error, "description": "session_ended: not the running session"},
+                   413: {"model": Error, "description": "image_too_large"},
+                   422: {"model": Error, "description": "bad_image: not a JPEG/PNG"}},
+        # The body is the raw image, so describe it for the docs (and their upload button).
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "image/jpeg": {"schema": {"type": "string", "format": "binary"}}}}},
+    )
+    async def frame(request: Request,
+                    session_id: str = Query(description="The id /api/session/start returned"),
+                    view: bool = Query(False, description="Also return the annotated analysis panel"),
                     user: User = Depends(current_user)):
+        """The body is one JPEG camera frame (the app sends 518 px wide, upright).
+        The first frame of a session can take long: it waits for a depth map."""
         body = await request.body()
         if len(body) > SERVER["max_image_bytes"]:
             raise HTTPException(413, "image_too_large")
@@ -190,7 +287,7 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
         writer.frame(session_id, clock(), result)
 
         return {
-            "frame_idx": result["frame_idx"],
+            "frame_idx": int(result["frame_idx"]),
             "command":   result["command"],
             "phrase":    result["phrase"],
             "detail":    result["detail"],
@@ -216,7 +313,9 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
             raise HTTPException(403, "cannot_change_admin")
         return rows[0]
 
-    @app.post("/api/admin/users", status_code=201)
+    @app.post("/api/admin/users", status_code=201, tags=["admin"], response_model=CreatedUser,
+              summary="Add a blind user",
+              responses={**_ADMIN_ERRORS, 400: {"model": Error, "description": "e.g. email already registered"}})
     def create_user(req: NewUser, admin: User = Depends(admin_user)):
         email = req.email.strip().lower()
         if not _EMAIL.match(email):
@@ -225,7 +324,9 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
                           req.display_name.strip() or email)
         return {"id": u["id"], "email": u.get("email", email)}
 
-    @app.patch("/api/admin/users/{user_id}")
+    @app.patch("/api/admin/users/{user_id}", tags=["admin"], response_model=Ok,
+               summary="Change a blind user (password, on/off, name)",
+               responses={**_ADMIN_ERRORS, 404: {"model": Error, "description": "no_such_user"}})
     def change_user(user_id: UUID, req: UserChange, admin: User = Depends(admin_user)):
         uid = str(user_id)
         target_profile(uid)
@@ -245,7 +346,9 @@ def create_app(*, verifier, db, writer, process, reset, is_ready=lambda: True,
             supabase_call(db.update, "profiles", {"id": uid}, profile)
         return {"ok": True}
 
-    @app.delete("/api/admin/users/{user_id}")
+    @app.delete("/api/admin/users/{user_id}", tags=["admin"], response_model=Ok,
+                summary="Delete a blind user (their sessions are kept)",
+                responses={**_ADMIN_ERRORS, 404: {"model": Error, "description": "no_such_user"}})
     def delete_user(user_id: UUID, admin: User = Depends(admin_user)):
         uid = str(user_id)
         target_profile(uid)

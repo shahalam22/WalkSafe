@@ -231,3 +231,46 @@ def test_verifier_rejects_wrong_audience():
         v.verify(token(aud="anon"))
     assert v.verify(token("admin")).is_admin
     assert v.verify(token("superuser")).role == "blind"
+
+
+# ── API docs (Swagger) ───────────────────────────────────────────────────────
+
+def test_swagger_ui_and_redoc_pages(env):
+    client, *_ = env
+    for path in ("/docs", "/redoc"):
+        r = client.get(path)
+        assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "swagger-ui" in client.get("/docs").text.lower()
+
+
+def test_openapi_schema_lists_every_endpoint(env):
+    client, *_ = env
+    spec = client.get("/openapi.json").json()
+    assert spec["info"]["title"] == "WalkSafe API"
+    paths = spec["paths"]
+    assert set(paths) == {"/api/health", "/api/session/start", "/api/session/stop", "/api/frame",
+                          "/api/admin/users", "/api/admin/users/{user_id}"}
+    assert set(paths["/api/admin/users/{user_id}"]) == {"patch", "delete"}
+
+
+def test_openapi_documents_login_and_frame_upload(env):
+    client, *_ = env
+    spec = client.get("/openapi.json").json()
+    schemes = spec["components"]["securitySchemes"]
+    assert any(s["type"] == "http" and s["scheme"] == "bearer" for s in schemes.values())
+    assert "security" not in spec["paths"]["/api/health"]["get"]          # no login needed
+    assert spec["paths"]["/api/session/start"]["post"]["security"]
+    frame = spec["paths"]["/api/frame"]["post"]
+    assert frame["requestBody"]["content"]["image/jpeg"]["schema"]["format"] == "binary"
+    assert {p["name"] for p in frame["parameters"]} == {"session_id", "view"}
+
+
+def test_docs_can_be_turned_off(monkeypatch):
+    from config import SERVER
+    monkeypatch.setitem(SERVER, "api_docs", False)
+    app = create_app(verifier=Verifier(URL, FakeJwks()), db=FakeDb(), writer=FakeWriter(),
+                     process=fake_process, reset=lambda: None)
+    with TestClient(app) as client:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert client.get(path).status_code == 404
+        assert client.get("/api/health").status_code == 200

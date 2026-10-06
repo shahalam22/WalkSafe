@@ -62,4 +62,5 @@ SERVER = {
     "max_image_bytes":  2_000_000,
     "session_idle_s":   60,              # a session with no frames for this long is closed
     "view_jpeg_quality": 70,
+    "api_docs":         True,            # Swagger UI at /docs, ReDoc at /redoc, schema at /openapi.json
 }
