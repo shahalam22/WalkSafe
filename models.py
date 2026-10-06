@@ -4,7 +4,6 @@ from transformers import DepthProImageProcessorFast, DepthProForDepthEstimation
 from torchvision.models.optical_flow import raft_small, Raft_Small_Weights
 from config import CFG
 import audio.speaker as speaker
-import storage
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -43,13 +42,12 @@ def load_all():
     # ── Speaker — last, non-critical ──────────────────────────────────────────
     # Initialised after vision models so a TTS failure never blocks the pipeline
     speaker.init()
-    storage.init()
 
     print("✅ All models loaded")
 
 
 def is_ready():
-    """Quick health check — call from ui.py before accepting frames."""
+    """Quick health check — the server calls this before accepting frames."""
     return all([
         depth_processor  is not None,
         depth_model      is not None,

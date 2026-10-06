@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>WalkSafe</title>
+  <meta name="description" content="Walking guidance for blind and low-vision pedestrians">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icons/logo.svg">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="live" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- Loading -->
+  <main id="loading" data-screen class="screen center-screen">
+    <p class="brand">WalkSafe</p>
+    <p class="muted" id="loading-msg">Loading…</p>
+  </main>
+
+  <!-- Sign in -->
+  <main id="login" data-screen class="screen center-screen" hidden>
+    <form id="login-form" class="card login-card">
+      <span class="logo" aria-hidden="true"></span>
+      <h1 class="brand">WalkSafe</h1>
+      <p class="muted">Sign in. A helper does this once on each phone.</p>
+      <label>Email
+        <input id="login-email" type="email" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input id="login-password" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="btn primary" id="login-submit">Sign in</button>
+    </form>
+  </main>
+
+  <!-- Guidance (the blind user's screen) -->
+  <main id="guide" data-screen class="screen guide" hidden>
+    <section id="guide-view" class="guide-view" aria-hidden="true">
+      <video id="guide-video" playsinline muted></video>
+      <img id="guide-panel" alt="">
+    </section>
+
+    <button id="guide-toggle" class="guide-toggle" type="button">
+      <span id="guide-title" class="guide-title">Tap anywhere to start</span>
+      <span id="guide-command" class="guide-command"></span>
+      <span id="guide-status" class="guide-status"></span>
+    </button>
+
+    <button id="guide-menu-btn" class="guide-menu-btn" type="button">Helper menu</button>
+
+    <dialog id="helper" class="sheet" aria-labelledby="helper-title">
+      <form method="dialog" class="sheet-body">
+        <h2 id="helper-title">Helper menu</h2>
+        <p class="muted" id="helper-who"></p>
+
+        <h3>Server</h3>
+        <p id="helper-server" class="muted">Not checked yet.</p>
+        <button type="button" class="btn" id="helper-check">Check server</button>
+
+        <h3>This phone</h3>
+        <div class="row-wrap">
+          <button type="button" class="btn" id="helper-camera">Allow camera</button>
+          <button type="button" class="btn" id="helper-voice">Test voice</button>
+          <button type="button" class="btn" id="helper-install" hidden>Install app</button>
+        </div>
+        <p class="muted small" id="helper-install-hint">
+          To add WalkSafe to the home screen: Chrome menu (⋮) → <b>Add to Home screen</b> → <b>Install</b>.
+        </p>
+
+        <h3>Settings</h3>
+        <label class="check"><input type="checkbox" id="pref-view"> Show camera and analysis on screen (for demos)</label>
+        <label>Repeat the current instruction
+          <select id="pref-repeat">
+            <option value="0">Only when it changes</option>
+            <option value="5">Every 5 seconds</option>
+            <option value="10">Every 10 seconds</option>
+          </select>
+        </label>
+        <label>Speech speed <span id="pref-rate-val"></span>
+          <input type="range" id="pref-rate" min="0.6" max="1.6" step="0.1">
+        </label>
+
+        <div class="row-wrap sheet-actions">
+          <button type="button" class="btn" id="helper-admin" hidden>Admin dashboard</button>
+          <button type="button" class="btn danger" id="helper-signout">Sign out</button>
+          <button class="btn primary" value="close">Close</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <!-- Admin -->
+  <div id="admin" data-screen class="screen admin" hidden>
+    <header class="admin-header">
+      <span class="brand-sm">WalkSafe <span class="muted">Admin</span></span>
+      <span class="muted small" id="admin-who"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="admin-guide">Guidance screen</button>
+      <button class="btn" id="admin-signout">Sign out</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="sessions" aria-selected="true">Sessions</button>
+      <button role="tab" data-tab="users">Users</button>
+      <button role="tab" data-tab="server">Server</button>
+      <button role="tab" data-tab="setup">Phone setup</button>
+    </nav>
+
+    <section id="tab-sessions" class="tab-panel" role="tabpanel">
+      <div class="toolbar">
+        <label class="inline">User
+          <select id="sess-user"><option value="">All users</option></select>
+        </label>
+        <button class="btn" id="sess-refresh">Refresh</button>
+      </div>
+      <div id="sess-tiles" class="tiles"></div>
+      <div class="chart-grid">
+        <figure class="card chart-card"><figcaption>Navigation commands</figcaption><div id="chart-commands"></div></figure>
+        <figure class="card chart-card"><figcaption>Agent risk levels</figcaption><div id="chart-risks"></div></figure>
+        <figure class="card chart-card"><figcaption>Walking actions</figcaption><div id="chart-actions"></div></figure>
+      </div>
+      <div class="card">
+        <h2 class="card-title">Sessions</h2>
+        <div class="table-wrap"><table id="sess-table" class="table"></table></div>
+      </div>
+    </section>
+
+    <section id="tab-session" class="tab-panel" role="tabpanel" hidden>
+      <div class="toolbar">
+        <button class="btn" id="detail-back">← All sessions</button>
+        <span class="spacer"></span>
+        <button class="btn" data-export="frames">Frames CSV</button>
+        <button class="btn" data-export="agents">Agents CSV</button>
+        <button class="btn" data-export="gaps">Gaps CSV</button>
+      </div>
+      <h2 id="detail-title" class="page-title"></h2>
+      <p id="detail-sub" class="muted"></p>
+      <div id="detail-tiles" class="tiles"></div>
+      <figure class="card chart-card wide"><figcaption>Walking speed (m/s)</figcaption><div id="chart-speed"></div></figure>
+      <div class="chart-grid">
+        <figure class="card chart-card"><figcaption>Navigation commands</figcaption><div id="detail-commands"></div></figure>
+        <figure class="card chart-card"><figcaption>Agent risk levels</figcaption><div id="detail-risks"></div></figure>
+        <figure class="card chart-card"><figcaption>Walking actions</figcaption><div id="detail-actions"></div></figure>
+      </div>
+    </section>
+
+    <section id="tab-users" class="tab-panel" role="tabpanel" hidden>
+      <form id="user-form" class="card form-grid">
+        <h2 class="card-title">Add a blind user</h2>
+        <label>Name <input id="nu-name" maxlength="80" placeholder="e.g. Rahim"></label>
+        <label>Email <input id="nu-email" type="email" required placeholder="used to sign in"></label>
+        <label>Password <input id="nu-password" type="text" minlength="6" required placeholder="at least 6 characters"></label>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">Add user</button>
+          <span id="user-form-msg" class="small" role="status"></span>
+        </div>
+      </form>
+      <div class="card">
+        <h2 class="card-title">Users</h2>
+        <p class="muted small">Adding, changing or removing users needs the server to be running.</p>
+        <div class="table-wrap"><table id="users-table" class="table"></table></div>
+      </div>
+    </section>
+
+    <section id="tab-server" class="tab-panel" role="tabpanel" hidden>
+      <form id="server-form" class="card">
+        <h2 class="card-title">Server address</h2>
+        <p class="muted">Each time you start the Colab notebook, it prints a new address
+          (<code>https://….trycloudflare.com</code>). Paste it here and save. Every phone reads it when WalkSafe starts.</p>
+        <label>Address <input id="server-url" type="url" placeholder="https://example.trycloudflare.com" autocomplete="off"></label>
+        <div class="form-actions">
+          <button type="button" class="btn" id="server-test">Test</button>
+          <button type="submit" class="btn primary">Save</button>
+          <span id="server-msg" class="small" role="status"></span>
+        </div>
+        <p class="muted small" id="server-saved"></p>
+      </form>
+    </section>
+
+    <section id="tab-setup" class="tab-panel" role="tabpanel" hidden>
+      <div class="card prose">
+        <h2 class="card-title">Setting up a blind person's phone</h2>
+        <ol>
+          <li>Start the server on Colab and save its address in <b>Server</b>.</li>
+          <li>Add the person in <b>Users</b> with an email and password.</li>
+          <li>On their Android phone, open Chrome at <code id="setup-url"></code> and sign in with that email and password.</li>
+          <li>Open <b>Helper menu</b> (top of the screen): tap <b>Allow camera</b> and allow it, then <b>Test voice</b>.</li>
+          <li>Install the app: <b>Install app</b> in the helper menu, or Chrome menu (⋮) → <b>Add to Home screen</b>.
+            Then open WalkSafe from the new home-screen icon.</li>
+          <li>Tap <b>Check server</b>, then close the menu and tap the screen once to try a walk.</li>
+        </ol>
+        <h3>Teach the user</h3>
+        <ul>
+          <li><b>Open:</b> tap the WalkSafe icon, or say “Hey Google, open WalkSafe”.</li>
+          <li><b>Start:</b> tap anywhere on the screen (with TalkBack: double-tap anywhere).</li>
+          <li><b>Stop:</b> tap anywhere again, or shake the phone firmly.</li>
+          <li>Hold the phone upright at chest height with the back camera facing forward.</li>
+          <li>The screen stays on but black while guiding. Pressing the power button stops guidance;
+            when the screen comes back, WalkSafe starts again by itself.</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+</body>
+</html>

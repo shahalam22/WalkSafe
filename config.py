@@ -5,7 +5,8 @@ CFG = {
     "yolo_conf":              0.35,
 
     # ── Depth ──
-    "depth_every_n_frames":   5,
+    "depth_every_n_frames":   5,      # used when depth_in_background is off
+    "depth_in_background":    True,   # run depth in its own thread; frames use the newest depth map
     "depth_pct_low":          2,
     "depth_pct_high":         95,
 
@@ -49,4 +50,17 @@ CFG = {
 
     # ── Advisory strip ──
     "advisory_height_px":     130,
+}
+
+# ── Server ────────────────────────────────────────────────────────────────────
+# Secrets are never written here: SUPABASE_SECRET_KEY comes from the environment
+# (Colab Secrets on Colab, the .env file locally).
+SERVER = {
+    "supabase_url":     "https://eihhhppmjaduxcqodfea.supabase.co",
+    "port":             8000,
+    "tunnel":           "cloudflared",   # "cloudflared", "gradio" or "none"
+    "max_image_bytes":  2_000_000,
+    "session_idle_s":   60,              # a session with no frames for this long is closed
+    "view_jpeg_quality": 70,
+    "api_docs":         True,            # Swagger UI at /docs, ReDoc at /redoc, schema at /openapi.json
 }
