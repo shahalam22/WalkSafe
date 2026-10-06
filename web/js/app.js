@@ -129,7 +129,7 @@ $("#forgot-form").addEventListener("submit", async (e) => {
       : error.message;
   } else {
     msg.className = "ok";
-    msg.textContent = `If an account uses ${email}, a reset link is on its way. Check the inbox and spam folder.`;
+    msg.textContent = "Link has been sent.";
   }
 });
 
